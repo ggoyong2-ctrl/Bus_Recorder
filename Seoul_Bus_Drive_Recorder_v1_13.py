@@ -1,141 +1,161 @@
 # ============================================================
-# Seoul_Bus_Drive_Recorder_v1.09
+# Seoul_Bus_Drive_Recorder_v1.13
 # 서울시내버스 어떤 노선이든 검색 후 운행기록을 수집합니다.
-# ============================================================
 #
-# [v1.09 주요 변경사항]
-#   - macOS 컴파일 환경에서 Seoul_Bus_Config.ini 경로 오류 수정
-#       · PyInstaller --onefile/--onedir 시 macOS .app 번들 내부의
-#         sys.executable 경로(.app/Contents/MacOS/...)가 .ini 파일 위치와
-#         달라 설정을 읽지 못하는 버그 수정
-#       · .app 번들 구조를 탐지해 .app 바깥 폴더(사용자 배치 위치)를
-#         current_dir / _cfg_file 기준 경로로 사용하도록 변경
-#       · 중복된 _base_dir 블록 제거, current_dir과 통합
+# 프로그램 전체 구조 (섹션 번호 체계)
+# ─────────────────────────────────────────────────────────────
+#  0. 패키지 임포트
 #
-# [v1.08 주요 변경사항]
-#   - 툴팁 표시 방식 수정 (macOS 호환)
-#       · deiconify() 후 lift() 대신 attributes("-topmost", True) 사용
-#       · lift()는 macOS에서 포커스를 툴팁 창으로 이동시켜
-#         이후 canvas의 <Enter>/<Leave> hover 이벤트가 발생하지 않는 버그 수정
-#       · canvas.focus_set()으로 포커스를 즉시 canvas에 복원
+#  1. 고정 설정값
+#     : API 인증키(초기 빈값·INI 파일로 관리), 글꼴, 아이콘/이미지(Base64), API URL
 #
-# [v1.07 주요 변경사항]
-# 1. 엑셀 컬럼 구조 개편
-#      · E열 운수사명 삭제
-#      · 기존 B·C·D열(도착정류소명·노선·차량번호)을 C·D·E열로 이동
-#      · 새 B열 '운행시작/종료' 추가 (첫/두번째 정류소 → 운행시작, 마지막 정류소 → 운행종료)
-# 2. 출발 정류소명 수정
-#      · 두번째 정류소에서 출발 감지 시, 두번째 정류소명·arsId를 엑셀에 기록
-#        (기존: 항상 첫번째 정류소명·arsId로 기록)
-# 3. C열 헤더명 변경: '도착정류소명' → '정류소이름(번호)'
-# 4. C열 너비 기존 대비 2/3로 축소
+#  2. 노선도 관련 상수·함수·위젯
+#     2-1  _make_bus_photo()     버스 아이콘 이미지 생성
+#     2-2  레이아웃 상수         정류소 원·칸 크기·색상 등
+#     2-3  _truncate_name()      정류소 이름 길이 제한
+#     2-4  _darken_color()       색상 어둡게 변환
+#     2-5  _fmt_bus_no()         차량번호 포맷 변환
+#     2-6  _format_remain_time() 초→시간분초 문자열 변환
+#     2-7  _draw_route()         캔버스에 노선도 그리기 (핵심 함수)
+#     2-8  AutoScrollbar         내용 없으면 자동 숨김 스크롤바
+#     2-9  RouteMapPanel         노선도 패널 UI 컨테이너 클래스
 #
-# [v1.06 주요 변경사항]
-#   - 운행 종료 판정 5분 유예 로직 도입
-#       · POS1 응답에 차량이 없어도 즉시 운행 종료로 판정하지 않음
-#       · 최초 빈 응답 감지 후 5분간 POS1·POS2 호출을 계속 유지
-#       · 5분 경과 후에도 차량이 없으면 그때 운행 종료 확정 → POS 정지
-#       · 유예 기간 중 노선도를 빈 버스 목록으로 갱신하여
-#         막차 도착 후 아이콘이 잔존하는 문제 해소
-#       · 유예 기간 중 POS2 호출이 계속되므로 막차 도착기록 누락 해소
-# [v1.05 주요 변경사항]
-#   - 혼잡도와 버스번호 사이 20px 여백(공백 5칸) 적용
-#   - 버스 노선 검색 API(SRCH) 호출 횟수를 API 현황 통계창에 추가
-# [v1.04 주요 변경사항]
-#   - 출발 판정 보조 정류소 추가 (2순위 출발 감지)
-#       · SLST(getStaionByRoute) 응답의 seq=2 정류소를 두 번째 정류소로 자동 확보
-#       · lastStnId == 첫 번째 정류소 OR 두 번째 정류소  AND  lastStTm > 0 → 출발 기록
-#       · 첫 번째 정류소에서 이미 기록된 차량은 기존 40분 중복 방지 로직으로 자동 차단
-#         (별도 캐시 추가 불필요)
-#       · 두 번째 정류소에서 포착된 경우 상태 컬럼에 "(2번째 정류소 감지)" 표기
-#   - 프로그램 정보창 텍스트 잘림 수정 (wrap="word" + displaylines)
-#   - 광역버스(routeType=6) 잔여좌석 표시 (툴팁 및 실시간 갱신)
-#   - 전체 팝업창 ESC 키로 닫기
-#   - 혼잡도 코드 수정 (0=없음 3=여유 4=보통 5=혼잡)
-#   - 버스 아이콘 짙은 파랑으로 변경, congetion 오타 대응
-# [v1.02 주요 변경사항]  (Seoul_Bus_Drive_Recorder_v1.03 분기)
-# 1. 노선 하드코딩 제거 → getBusRouteList API 로 노선 동적 검색
-# 2. 노선 선택 메뉴 → 노선 검색 팝업 (Toplevel + Treeview)
-# 3. API 인증키 입력 메뉴 신설 (메인키 + 보조키, 64자리 검증)
-# 4. 인증키 / 갱신주기 창 → 메뉴 버튼 하단 팝업 방식으로 통일
-# 5. 프로그램 제목 : 서울시내버스 노선 운행기록 수집 프로그램
+#  3. 메인 프로그램 클래스 DJBusRecorder
+#     3-1  __init__()            상태 변수 초기화 + UI 구성 시작
+#     3-2  setup_ui()            전체 화면 레이아웃 구성
+#     3-3  ask_interval()        갱신주기 입력 다이얼로그
+#     3-4  show_api_status()     API 호출 현황 팝업
+#     3-5  _refresh_api_table()  API 현황 팝업 데이터 갱신
+#     3-6  show_program_info()   프로그램 정보 창
+#     3-7  init_routes()         노선 초기화 (사용자가 추가한 노선 목록 복원)
+#     3-8  _init_route_map_panels() 노선도 패널 생성
+#     3-9  route_map_select()    표시 노선도 전환
+#     3-10 fetch_api()           서울시 버스 API 호출
+#     3-11 _make_fernet()        암호화 객체 생성 (API 키 보호)
+#     3-12 _enc_key()            API 키 암호화
+#     3-13 _dec_key()            API 키 복호화
+#     3-14 _load_config()        INI 설정 파일 읽기
+#     3-15 _save_config()        INI 설정 파일 저장
+#     3-16 _save_favorites()     즐겨찾기 노선 저장
+#     3-17 _handle_key_limit()   인증키 한도 초과 경고
+#     3-18 _fetch_first_time()   첫차 시각 조회
+#     3-19 _on_toggle()          기록 시작/중지 메뉴 핸들러
+#     3-20 start_monitoring()    자동 기록 시작
+#     3-21 stop_monitoring()     자동 기록 중지
+#     3-22 main_loop()           백그라운드 갱신 루프
+#     3-23 refresh_data()        한 사이클 갱신 진입점
+#     3-24 process_routes()      출발·도착 판정 핵심 로직
+#     3-25 show_route_search()   노선 검색 다이얼로그
+#     3-26 _load_route_from_search() 검색 결과 노선 추가
+#     3-27 _record()             기록 저장 + 화면 업데이트
+#     3-28 perform_auto_save()   엑셀 자동 저장 진입점
+#     3-29 _core_excel_save_logic() 엑셀 저장 핵심 로직
+#     3-30 _apply_excel_style()  엑셀 헤더 서식 적용
+#     3-31 log()                 로그창 메시지 출력
+#     3-32 format_hhmm()         API 시각 → HH:MM 변환
+#     3-33 format_datetm()       dataTm → YYYY-MM-DD HH:MM:SS 변환
+#     3-34 _on_root_click()      메인창 클릭 시 팝업 닫기
+#     3-35 _on_close()           창 닫기 확인 후 종료
+#
+#  4. 프로그램 시작
+#     : tkinter 루트 창 생성 → DJBusRecorder 인스턴스 → 이벤트 루프
 # ============================================================
 
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
-import threading        # 백그라운드 갱신 루프 및 저장 잠금
-import colorsys         # 노선도 색상 계산
-import time
-import os
-import sys
-import webbrowser       # 이메일·URL 외부 링크 열기
-import base64           # 이미지 Base64 디코딩
-import io               # Base64 → BytesIO 변환 (PIL 사용 시)
-from datetime import datetime, timedelta
-import xml.etree.ElementTree as ET   # API XML 응답 파싱
-from urllib.parse import unquote     # 서비스키 URL 디코딩
-import unicodedata           # 문자 표시 폭 계산 (CJK 2칸)
 
-# ── 필수 외부 패키지 ──
-# pip install requests pandas openpyxl
+# ============================================================
+# 0. 패키지 임포트
+# ─────────────────────────────────────────────────────────────
+# 파이썬에 기본 내장된 패키지와 별도로 설치해야 하는 외부 패키지를
+# 불러옵니다. 외부 필수 패키지(requests, pandas, openpyxl)가 없으면
+# 오류 메시지를 표시하고 프로그램을 즉시 종료합니다.
+# ============================================================
+
+import tkinter as tk                               # GUI 창·위젯 구성 (파이썬 기본 내장)
+from tkinter import ttk, messagebox, simpledialog  # 테마 위젯, 메시지창, 단순 입력창
+import threading        # 백그라운드 갱신 루프·저장 잠금 — API 호출을 별도 스레드에서 실행
+import colorsys         # RGB ↔ HSV 색상 변환 — 노선도 회차 이후 선을 어둡게 표시할 때 사용
+import time  # time.time(): 현재 유닉스 타임스탬프 / time.sleep(): 일시 정지
+import os  # 파일 경로·디렉토리 조작 (os.path, os.getcwd 등)
+import sys  # 파이썬 인터프리터 제어 (sys.exit, sys.frozen 등)
+import webbrowser  # 기본 웹브라우저 열기 (mailto:, https:// 링크 처리)
+import base64  # Base64 인코딩/디코딩 (아이콘·이미지 데이터를 코드 안에 내장)
+import io  # 바이트 데이터를 파일처럼 다루는 인메모리 스트림 (이미지 로딩에 사용)
+from datetime import datetime, timedelta  # datetime: 날짜·시각 처리 / timedelta: 시간 차이 계산
+import xml.etree.ElementTree as ET  # XML 파싱 — 서울시 API 응답(XML 형식)을 트리 구조로 분석
+from urllib.parse import unquote  # URL 인코딩된 문자열(%XX)을 실제 문자로 변환 (API 인증키 복원)
+import unicodedata   # 유니코드 문자 너비 판별 (한글·영문 구분 시 사용)
+
+# ── 필수 외부 패키지 (pip install requests pandas openpyxl) ──
 try:
-    import requests                               # HTTP API 호출
-    import pandas as pd                           # 데이터프레임 및 엑셀 저장
+    import requests                               # HTTP GET 요청으로 서울시 버스 API 호출
+    import pandas as pd                           # 기록 데이터를 표(DataFrame)로 관리, 엑셀 저장
     from openpyxl.styles import Font, PatternFill, Alignment  # 엑셀 헤더 서식
 except ImportError as e:
-    import tkinter.messagebox as _mb
-    _mb.showerror("패키지 없음", f"필수 패키지가 설치되어 있지 않습니다.\n\n{e}\n\n"
-                  "pip install requests pandas openpyxl 을 실행해주세요.")
-    sys.exit(1)
+    import tkinter.messagebox as _mb   # tkinter의 메시지박스 모듈 직접 임포트
+    _mb.showerror("패키지 없음", f"필수 패키지가 설치되어 있지 않습니다.\n\n{e}\n\n"   # 오류 대화상자 표시 (패키지 없음 안내)
+                  "pip install requests pandas openpyxl 을 실행해주세요.")   # 설치 명령어 안내
+    sys.exit(1)  # 프로그램 즉시 종료
 
-# ── 선택 외부 패키지: Pillow ──
-# 설치되어 있으면 이미지 렌더링 품질이 향상됩니다.
-# pip install Pillow
+# ── 선택 외부 패키지: Pillow (pip install Pillow) ──
+# PIL(Pillow): 이미지 처리 라이브러리
+# 있으면 PNG 아이콘을 고품질로 표시, 없으면 tkinter 기본 방식으로 대체합니다.
 try:
-    from PIL import Image, ImageTk
-    _PIL_OK = True
+    from PIL import Image, ImageTk   # Image: 이미지 조작 / ImageTk: tk 위젯용 이미지 변환
+    _PIL_OK = True    # Pillow 설치됨
 except ImportError:
-    _PIL_OK = False
+    _PIL_OK = False   # Pillow 없음 — tk.PhotoImage 폴백
 
-# ── 선택 외부 패키지: cryptography (인증키 암호화용) ──
-# pip install cryptography
 try:
+    # Fernet: 대칭키 암호화 클래스 / hashlib: 해시 함수(PBKDF2) / base64: 키 인코딩
     from cryptography.fernet import Fernet as _Fernet
     import hashlib as _hl
     import base64 as _b64
-    _CRYPTO_OK = True
+    _CRYPTO_OK = True   # cryptography 패키지 설치됨
 except ImportError:
-    _CRYPTO_OK = False
+    _CRYPTO_OK = False   # 없으면 API 키를 평문으로 저장 (암호화 비활성화)
     _Fernet = None
     _hl = None
     _b64 = None
 
-
 # ============================================================
 # 1. 고정 설정값
+# ─────────────────────────────────────────────────────────────
+# 프로그램 전체에서 공통으로 참조하는 상수와 설정값 모음입니다.
 # ============================================================
 
-# ── 서울시 버스 API 인증키 ──
-# 메인키 호출 한도 초과·미등록 시 백업키로 자동 전환합니다.
-# 인증키는 프로그램 실행 후 메뉴 > 인증키 입력에서 설정합니다.
-API_KEY_MAIN = ""   # 메인 인증키 (64자리)
-API_KEY_BACK = ""   # 보조 인증키 (64자리, 공란 허용)
+# ── 1-1. 서울시 버스 API 인증키 ──
+# 초기값은 빈 문자열이며, 프로그램 실행 시 Seoul_Bus_Config.ini 파일에서 읽어옵니다.
+# 사용자가 [API 키 설정] 버튼으로 입력하면 INI 파일에 저장됩니다.
+# 메인키 한도 초과 시 백업키로 자동 전환됩니다.
+# ── 서울시 공공데이터 API 인증키 ──
+# 공공데이터포털(data.go.kr)에서 발급받는 서비스 키입니다.
+# MAIN이 한도 초과되면 BACK(백업키)으로 자동 전환됩니다.
+# 인증키는 URL 인코딩(%XX) 형식으로 저장합니다.
+API_KEY_MAIN = ""
+API_KEY_BACK = ""
 
-# ── 글꼴 ──
-FONT      = "맑은 고딕"   # UI 전반
-FONT_MONO = "Consolas"    # 로그창 (고정폭)
+# ── 1-2. 글꼴 ──
+FONT      = "맑은 고딕"   # UI 전반에 사용하는 기본 글꼴 (한글 지원)
+FONT_MONO = "Consolas"    # 로그창 전용 고정폭 글꼴 (시각·메시지 정렬용)
 
-# ── 프로그램 아이콘 (Base64 내장) ──
+# ── 1-3. 프로그램 아이콘 (Base64 내장) ──
+# 창 제목표시줄과 작업표시줄에 표시되는 프로그램 아이콘입니다.
+# 프로그램 아이콘 이미지 — PNG를 Base64로 인코딩한 문자열 (파일 없이 코드 내장)
 ICON_B64 = "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"
 
-# ── 이미지 데이터 (Base64 내장) ──
+# ── 1-4. 이미지 데이터 (Base64 내장) ──
+# 프로그램 정보 창 하단의 공공누리 CC 이미지와 서울 공공데이터 개방 로고입니다.
+# 공공누리 마크 이미지 (Base64 인코딩)
 CC_IMG_B64 = "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1qxeK700SYXVWf/7eikZV9LwyACKrj7nf7wTckYBrTV5c9AwDZQ95Pg/x4PGfeKJJ+Sbb76RDRs2yPDhw6VevXry6KOPSrVq1eTaa6+Vu+++W5577jlp0aKFfPXVV7JOC/EcwHLlygWNg7zVuG4j+VWzNZaFCWqQhgzvzWFbuWKlNNBsBpTa7QYFHDp0qJnDnDlzpGXLlmZud911l1x11VVy4403Snx8vLz66qsyePBgWb9+vXz//femjTsO6WEDh0qf7n20ciKXoEhhrShPa6A9a5snbx4ZouWfAb36p6CezzzzjHk+a8a869ata+bHPK+++mph3qxtq1atZPbs2ea9hg0bJiArdx5Qetiu3zSFguNw69KSPmcA4WXz5csnBQsU1GzQKElo21E2/rkx7LNLlCghLECnTp1k0KBBBpOBbT/77DMZPXq0wW5t27aV++67z1CIcIMt+mmRcLimajbi4osv1qrWnCkWO1x/vzqwDIqFiy66SAuv/bRsNC6oGQAAYHz44YdSvXr1oLpwGcbjAC5fvlx69OgR1HTXzl1GoP950WJhI1nXoAZhMrRFA7jitxVGLkIL5Tbv3LmzrFixwmDiIkWKuFVh07fccovZm3nz5hkK6DaeNvkjgR3KrdnpGK0aZs3c+lBp2oFM88fml97demkFzX+CmkLdoMDvv/++8PygyjAZ3qthw4bmPbt27RrUEpmrab2msuSXJYLMx3oFNQiTOScAQUaAv4uIjJAuWmMzTgusoZ512WWXSYcOHQzbAcZlARISEqRp06YGS4Ft77//fnnllVcMduMAff755waTTZo0yWDnPFpv7zf+US0g99Pajf4aE+XRwArApmcRgsY8LUatzELyPjOmTg+qrlWrlmGhqlevHlTuZni3bt26yW+//eYWB9IAHwjg559/lpJakLYV6PE7vv6G/LnhT6PuTss70AZVOYcALc9RrU624yGL/PDDD9KxY0eJ0YfYlqc3vummmwwFhBK6fb/75ltDATgDyBIcfrfeLx0RESEgsjFaPvry0y+DmnDAoW4goKCKdGRyafsO5+ynn34S2E3blbVtr7WNW7TKHbMC62brwsUR4SrD1QEc8P5oC+BLZ30507c5LMOQIUMCkA0gREZG+rb1K0Rz8uSTTxr+fvXq1dKsWTNhM/zafqRtD2C17Dmyy9kCySk5JfDXs76c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"
+# 서울 공공데이터 개방 마크 이미지 (Base64 인코딩)
 GG_IMG_B64 = "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6OKLefGFF6irq2P//fcnGAoRdzaDpmnMnj2bbt2707t3b155+WUAqqqqOGrQICLhcJF7kjcMFixYwJLFi+0ZgA75UQKRSIRAMEgun/eG82SzWTKZDJdffjnvvfceq1atIhgMUldXR9euXTn8iMNpVtWMXD7PV199xdTJkzEMA7/f7zX/7tevHy1atmTa1Klks1ksy6J3795069aNF198kUAgQCKR4LDDDmPQoEH4fHa9eSqV4s033+Tzzz8nFArZhVP5PMceeyxt27VFWpKZM2eyePFifD4fl156KR9//DFLlizhqKOOIhAIIIQgbxisXbuWOXPmcFC/fnTv0YOXXnzxR+2P9aNl0t0Nl0gmqamtJeFojdLSUnK5HMcce6w3Kdbn85FMpdhUU0MqmSSVyVBSUkI+l2PQ0YMIhkLcc/fdZHM5+g8YQO/evbnrrrsaHaNsGAa6rnP+BRfQsnUrUskULVq2AASv/eN1SkpL6Nipk6fB3WlFyIJWPLLevevbrx9VzapIJZIYpkkkEiGVSnH8CSdwx4QJPPH445SXl9OrVy867rkn6VSKXD5PNBIhkUwy6Oijef6557hl7Fi6dOnChAkTqKiooLKyklqnCvLBBx9kzpdfMnz4cN6ZNImamhrOOPNMOnTsSI/u3VmyeDF1sRjffPMNXbt25YwzzuDB++8nHIlw1llnMeyKK3j26acJOyMZEvE4hw4cSF0sxnnnnENFRYVnjWKxGKeffjpnnnkmQlWJhELU1tby3Xffcecdd3De+ecz98svWbFiBclEgrOHDGHkyJFMmz6d1StXEggGuer3V3HB+edz2WWXkc1mScTjXHHllZx++uks+34F5517LldccQVLly6ld+/enHbaaTzzzDPkcjmuuuoqTjz5ZJ7++99Zu3YtiqLQsVMn7r//fh588EFeeuklSkpKSKfTlJSU0KZtO7As/E6jPE1VufCii1i3fj3z58/n14cdRmlZGYl4nI6dOlFWVsbBBx1Erz59OPXUU7l34kTatWlTHzftCgLimV1VZcyYMaTSabp06cJB/frx5ptvsn79euZ98y21tbXkDQPd72fChAkkEgk6duzIYQMH8o9//IO1a9cya9Ys4rEYhmkiVNUWpOpq1q5f72kbD6VTFCrKy+0NfOyxKJrGuvXruf766xl942h7KKRhkMmknTZV9TGLUBwh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"
 
-# ── 정류소 내장 정보 ──
-# 형식: stId(9자리) → (arsId 5자리, 정류소명)
-# API 초기화 없이 첫/마지막/직전 정류소 정보를 즉시 참조합니다.
+# ── 정릉 지역 주요 정류소 stId → (arsId, 정류소명) 매핑 ──
+# stId: 서울시 내부 9자리 정류소 ID (API lastStnId 비교에 사용)
+# arsId: 정류소 번호 5자리 (화면·엑셀 표시에 사용)
+# API를 호출하지 않고 즉시 참조할 수 있도록 코드에 하드코딩합니다.
 STATION_INFO = {
+    # Seoul 버전에서도 동일한 정릉 정류소 코드를 참조할 수 있습니다
     "107000071": ("08161", "정릉산장아파트"),
     "107000246": ("08344", "대진여객차고지"),
     "107000070": ("08160", "정릉북한산국립공원입구"),
@@ -143,98 +163,111 @@ STATION_INFO = {
     "107000072": ("08162", "정릉대우아파트"),
 }
 
-# ── 노선 정보 ── (동적 검색으로 대체, 하드코딩 없음)
-ROUTE_SETUP = []   # 사용자 검색으로 채워집니다.
+ROUTE_SETUP = []
 
-# ── API URL ──
-# POS1: 노선 전체 버스 위치 조회 → 첫 정류소 출발 판정 전담
-# POS2: 노선 구간별 버스 위치 조회 → 마지막 정류소 도착 판정 전담
-# SLST: 노선 전체 정류소 목록 조회 → 초기화 시 정류소 총수(st_cnt) 확보
-# RINF: 노선 기본 정보 조회 → 초기화 시 운수사명, NO_BUS 시 첫차 시각 확보
-URL_POS1 = "http://ws.bus.go.kr/api/rest/buspos/getBusPosByRtid"       # 출발 판정 전담
-URL_POS2 = "http://ws.bus.go.kr/api/rest/buspos/getBusPosByRouteSt"    # 도착 판정 전담
+# ── 1-5. 서울시 버스 API URL ──
+# POS1: 노선 전체 버스 위치 조회 → 출발 판정 전담
+# POS2: 구간별 버스 위치 조회 → 종점 도착 판정 전담
+# SLST: 노선 전체 정류소 목록 조회 → 노선 추가 시 사용
+# RINF: 노선 기본 정보 조회 → 첫차/막차 시각, 운수사명 확보
+# SRCH: 노선번호 검색 → show_route_search() 에서 사용
+# URL_POS1: 노선 ID 하나를 주면 그 노선에 있는 버스 전체의 위치를 돌려줍니다.
+#           버스가 몇 번 정류소 앞에 있는지(lastStnId), 종점까지 몇 초 남았는지(lastStTm) 포함.
+# → 이 정보로 "버스가 첫 정류소를 막 지났다 = 출발했다"를 판정합니다.
+URL_POS1 = "http://ws.bus.go.kr/api/rest/buspos/getBusPosByRtid"
+
+# URL_POS2: 노선의 특정 구간(startOrd ~ endOrd) 안에 있는 버스만 돌려줍니다.
+#           여기서는 startOrd=1, endOrd=전체정류소수 로 호출하여 종점 근처 버스를 찾습니다.
+# → "버스가 마지막 정류소에 있다 = 종점 도착했다"를 판정합니다.
+URL_POS2 = "http://ws.bus.go.kr/api/rest/buspos/getBusPosByRouteSt"
+
+# URL_SLST: 노선의 전체 정류소 목록을 돌려줍니다.
+#           정류소 총 개수(st_cnt)를 알기 위해 노선 추가 시 1회 호출합니다.
 URL_SLST = "http://ws.bus.go.kr/api/rest/busRouteInfo/getStaionByRoute"
+
+# URL_RINF: 노선의 기본 정보(첫차·막차 시각, 운수사명, 노선 유형 등)를 돌려줍니다.
+#           운행시간대 보호구간을 계산하기 위해 firstBusTm·lastBusTm을 가져옵니다.
 URL_RINF = "http://ws.bus.go.kr/api/rest/busRouteInfo/getRouteInfo"
+
+# URL_SRCH: 노선 번호나 이름으로 노선을 검색합니다.
+#           [노선 검색] 다이얼로그에서 사용자가 노선을 찾을 때 사용됩니다.
 URL_SRCH = "http://ws.bus.go.kr/api/rest/busRouteInfo/getBusRouteList"
 
-# ── 운행 종료 판정 유예 시간(초) ──
-# POS1 응답에 차량이 없는 상태가 이 시간 이상 지속되면 운행 종료로 확정합니다.
-POS_EMPTY_GRACE_SEC = 300   # 5분
-
-
 # ============================================================
-# 2. 노선도 관련 상수·함수·위젯 (노선도 뷰어 v12 통합)
+# 2. 노선도 관련 상수·함수·위젯
+# ─────────────────────────────────────────────────────────────
+# 화면 왼쪽에 표시되는 ㄹ자형 노선도를 그리고 관리하는 모든 구성 요소입니다.
+# DJ 버전과 동일한 구조이며, 동적으로 추가된 노선을 지원합니다.
 # ============================================================
 
-# ── 버스 아이콘 (icon.png 20×20, PNG Base64 내장) ──
+# ── 2-1. 버스 아이콘 이미지 데이터 (PNG, Base64 내장) ──
 _BUS_ICON_B64 = "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"
 
+# ── 노선도에 표시할 버스 아이콘 이미지 생성 함수 ──
 def _make_bus_photo():
-    """버스 아이콘을 20x20 으로 리사이즈해서 반환합니다.
-    PIL 미설치 시 tk.PhotoImage로 폴백합니다."""
-    import base64 as _b64m, io as _io
-    raw = _b64m.b64decode(_BUS_ICON_B64)
-    if _PIL_OK:
+    
+    import base64 as _b64m, io as _io  # 지역 임포트 — 함수 내부에서만 필요한 경우
+    raw = _b64m.b64decode(_BUS_ICON_B64)  # Base64 문자열 → 바이트 데이터로 복원
+    if _PIL_OK:  # PIL이 설치된 경우: 고품질 이미지 처리
         from PIL import Image, ImageTk
-        img = Image.open(_io.BytesIO(raw)).resize((20, 20), Image.LANCZOS)
-        return ImageTk.PhotoImage(img)
-    # PIL 없음: 원본 데이터를 tk.PhotoImage로 (크기는 고정 안됨)
-    return tk.PhotoImage(data=_BUS_ICON_B64)
+        img = Image.open(_io.BytesIO(raw)).resize((20, 20), Image.LANCZOS)  # 바이트 데이터로부터 이미지 열기
+        return ImageTk.PhotoImage(img)  # PIL 이미지를 tkinter용 PhotoImage로 변환
+    return tk.PhotoImage(data=_BUS_ICON_B64)  # PIL 없을 때: tkinter가 직접 PNG Base64 데이터를 처리
 
+# ── 2-2. 노선도 레이아웃 상수 ──
+# _draw_route()가 정류소·원·연결선을 배치할 때 사용하는 픽셀 단위 값들입니다.
+STOPS_PER_ROW    = 15    # 한 행에 표시할 정류소 수 — 15개마다 줄 바꿈(ㄹ자형)
+CELL_W           = 42    # 정류소 간 가로 간격 (픽셀)
+CELL_H           = 70    # 정류소 간 세로 간격 (행 바꿈 시, 픽셀)
+PAD_X            = 55    # 캔버스 좌우 여백 (픽셀)
+PAD_Y            = 110   # 캔버스 상단 여백 (픽셀)
+CIRCLE_R         = 8     # 일반 정류소 원 반지름 (픽셀)
+CIRCLE_R_SPECIAL = 13    # 출발·회차·종점 정류소 원 반지름 강조 (픽셀)
+TEXT_X_OFFSET    = 9     # 정류소 이름 텍스트 가로 오프셋 (픽셀)
+TEXT_GAP         = 0     # 정류소 이름과 원 사이 추가 간격 (픽셀)
+MAP_BG           = "#C8C8C8"   # 노선도 캔버스 배경색 (밝은 회색)
+MAP_TEXT_COLOR   = "#555555"   # 정류소 이름 텍스트 색상 (짙은 회색)
 
-# ── 노선도 레이아웃 상수 ──
-STOPS_PER_ROW    = 15
-CELL_W           = 42
-CELL_H           = 70
-PAD_X            = 55
-PAD_Y            = 110
-CIRCLE_R         = 8
-CIRCLE_R_SPECIAL = 13
-TEXT_X_OFFSET    = 9
-TEXT_GAP         = 0
-MAP_BG           = "#C8C8C8"
-MAP_TEXT_COLOR   = "#555555"
-
-ROUTE_TYPE_LABEL = {
+# 노선 유형 코드 → 화면 표시용 한글 이름 매핑
+# 노선 유형 코드 → 한글 이름 딕셔너리 (화면 표시용)
+ROUTE_TYPE_LABEL = {   # 노선 유형 코드 → 줄임말 (노선도 표시용)
     "1": "공항", "2": "마을", "3": "간선", "4": "지선",
     "5": "순환", "6": "광역", "7": "인천", "8": "경기",
     "9": "폐지", "0": "공용",
 }
-ROUTE_TYPE_COLOR = {
+# 노선 유형 코드 → 노선도 선 색상 매핑
+ROUTE_TYPE_COLOR = {  # 노선 유형 코드 → 선 색상 딕셔너리
     "1": "#C8A000", "2": "#6DBF67", "3": "#1E6FD9", "4": "#5CB85C",
     "5": "#E0B800", "6": "#D9363E", "7": "#20B2AA", "8": "#20B2AA",
     "9": "#888888", "0": "#333333",
 }
-DEFAULT_LINE_COLOR = "#333333"
+DEFAULT_LINE_COLOR = "#333333"   # routeType 미확인 시 기본 선 색상
 
-ROUTE_MENU_ORDER  = []      # 검색/추가 시 동적으로 채워집니다.
-DEFAULT_MAP_ROUTE = None    # 검색 후 선택한 노선이 기본이 됩니다.
-
+ROUTE_MENU_ORDER  = []
+DEFAULT_MAP_ROUTE = None  # 프로그램 시작 시 기본으로 표시할 노선명
 
 def _truncate_name(name: str, max_len: int = 8) -> str:
-    """정류소 이름을 최대 길이로 자릅니다."""
+    
     return name if len(name) <= max_len else name[:7] + ".."
 
-
 def _darken_color(hex_color: str, factor: float = 0.60) -> str:
-    """16진수 색상을 어둡게 합니다."""
+    
     hex_color = hex_color.lstrip("#")
     r, g, b = (int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
-    h, s, v = colorsys.rgb_to_hsv(r, g, b)
-    r2, g2, b2 = colorsys.hsv_to_rgb(h, s, max(0.0, v * factor))
-    return "#{:02X}{:02X}{:02X}".format(int(r2*255), int(g2*255), int(b2*255))
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)   # RGB → HSV 변환 (H=색상, S=채도, V=밝기)
+    r2, g2, b2 = colorsys.hsv_to_rgb(h, s, max(0.0, v * factor))   # HSV → RGB 변환 (각 값은 0.0~1.0)
+    return "#{:02X}{:02X}{:02X}".format(int(r2*255), int(g2*255), int(b2*255))   # 0.0~1.0 → 0~255 정수 변환
 
 def _fmt_bus_no(raw_plain_no: str) -> str:
-    """버스 번호를 "서울 xx 사 xxxx" 형식으로 변환합니다."""
+    
     import re as _re
     m = _re.match(r'^(\d+)(사)(\d+)$', raw_plain_no.strip())
     if m:
         return f"서울 {m.group(1)} {m.group(2)} {m.group(3)}"
     return f"서울 {raw_plain_no}"
 
-
 def _format_remain_time(seconds: int) -> str:
-    """초를 '시간 분 초' 형식으로 변환합니다."""
+    
     h = seconds // 3600
     m = (seconds % 3600) // 60
     s = seconds % 60
@@ -244,18 +277,14 @@ def _format_remain_time(seconds: int) -> str:
         return f"{m}분 {s}초"
     return f"{s}초"
 
-
 def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
-    """노선도를 캔버스에 그립니다. (노선도 뷰어 v12 draw_route 이식)
-    반환값: (bus_positions_info, total_w, map_end_y)
-    """
+    
     canvas.delete("all")
 
-    # 툴팁 초기화
-    if not hasattr(canvas, '_tooltip_win'):
+    if not hasattr(canvas, '_tooltip_win'):  # 객체에 특정 속성이 있는지 확인
         tw = tk.Toplevel(canvas)
         tw.wm_overrideredirect(True)
-        tw.withdraw()
+        tw.withdraw()  # 창을 화면에서 숨김 (destroy는 아님, 다시 표시 가능)
         lbl = tk.Label(tw, text="", background="#FFFFE0", foreground="#000000",
                        relief="solid", borderwidth=1, font=("맑은 고딕", 9))
         lbl.pack(ipadx=4, ipady=2)
@@ -269,79 +298,89 @@ def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
                 if tag.startswith("bus_tag_"):
                     canvas._current_hover_tag = tag
                     info = canvas._tooltip_dict.get(tag, {})
-                    sec  = info.get("sec", 0) if isinstance(info, dict) else int(info)
-                    cong_code = info.get("congestion", "0") if isinstance(info, dict) else "0"
-                    pno  = info.get("plain_no", "") if isinstance(info, dict) else ""
-                    _CONG = {"3":"여유","4":"보통","5":"혼잡"}
-                    _cong_str = str(cong_code)
-                    if route_type == "6":
-                        if _cong_str == "99" or _cong_str == "0":
+                    sec  = info.get("sec", 0) if isinstance(info, dict) else int(info)  # 키가 없으면 0 반환
+                    cong_code = info.get("congestion", "0") if isinstance(info, dict) else "0"  # 객체가 특정 클래스의 인스턴스인지 확인
+                    pno  = info.get("plain_no", "") if isinstance(info, dict) else ""  # 키가 없으면 빈 문자열 반환
+                    _CONG = {"3":"여유","4":"보통","5":"혼잡"}   # 일반 노선 혼잡도 코드 → 텍스트 딕셔너리
+                    _cong_str = str(cong_code)   # 혼잡도 코드를 문자열로 변환 (딕셔너리 키 비교용)
+                    if route_type == "6":   # 광역버스(6번)는 좌석제 → 혼잡도 대신 잔여 좌석 수 표시
+                        if _cong_str == "99" or _cong_str == "0":   # 99 또는 0: 좌석 정보 없음 (집계 안됨)
                             cong_label = ""
                         else:
                             try:
-                                cong_label = f"잔여{int(_cong_str)}석"
+                                cong_label = f"잔여{int(_cong_str)}석"   # 예) 코드=15 → "잔여15석"
                             except ValueError:
                                 cong_label = ""
                     else:
-                        cong_label = _CONG.get(_cong_str, "")
+                        cong_label = _CONG.get(_cong_str, "")  # 키가 없으면 빈 문자열 반환
                     line1 = (f"{_fmt_bus_no(pno)}     {cong_label}"
                              if cong_label else _fmt_bus_no(pno))
                     line2 = f"종점도착까지 남은 시간 : {_format_remain_time(sec)}"
                     canvas._tooltip_lbl.config(text=f"{line1}\n{line2}")
                     x, y = event.x_root + 15, event.y_root + 15
                     canvas._tooltip_win.wm_geometry(f"+{x}+{y}")
-                    canvas._tooltip_win.deiconify()
-                    canvas._tooltip_win.attributes("-topmost", True)  # lift() 대신 – macOS 포커스 탈취 방지
-                    canvas.focus_set()   # 포커스를 즉시 canvas로 복원 → hover 이벤트 유지
+                    canvas._tooltip_win.deiconify()  # 숨겨진(withdrawn) 창을 다시 화면에 표시
+                    canvas._tooltip_win.attributes("-topmost", True)
+                    canvas.focus_set()  # 이 위젯에 키보드 포커스 설정
                     break
 
         def on_leave(event):
             canvas._current_hover_tag = None
-            canvas._tooltip_win.withdraw()
+            canvas._tooltip_win.withdraw()  # 창을 화면에서 숨김 (destroy는 아님, 다시 표시 가능)
 
         def on_motion(event):
             if canvas._tooltip_win.state() == "normal":
                 canvas._tooltip_win.wm_geometry(
                     f"+{event.x_root+15}+{event.y_root+15}")
 
-        canvas.tag_bind("has_tooltip", "<Enter>",  on_enter)
-        canvas.tag_bind("has_tooltip", "<Leave>",  on_leave)
-        canvas.tag_bind("has_tooltip", "<Motion>", on_motion)
+        canvas.tag_bind("has_tooltip", "<Enter>",  on_enter)   # 태그가 붙은 아이템들에 일괄 이벤트 연결
+        canvas.tag_bind("has_tooltip", "<Leave>",  on_leave)   # 태그가 붙은 아이템들에 일괄 이벤트 연결
+        canvas.tag_bind("has_tooltip", "<Motion>", on_motion)   # 태그가 붙은 아이템들에 일괄 이벤트 연결
 
     canvas._current_hover_tag = None
-    if not hasattr(canvas, '_tooltip_dict'):
+    if not hasattr(canvas, '_tooltip_dict'):  # 객체에 특정 속성이 있는지 확인
         canvas._tooltip_dict = {}
-    canvas._tooltip_dict.clear()
+    canvas._tooltip_dict.clear()  # 딕셔너리·집합의 모든 항목 삭제
 
-    n       = len(stations)
+    n       = len(stations)   # 이 노선의 전체 정류소 개수
+    # 캔버스 전체 가로 너비 = 좌우 여백 2개 + 정류소 간격 × (한 줄 수 - 1) + 여유 20px
     total_w = PAD_X * 2 + (STOPS_PER_ROW - 1) * CELL_W + 20
 
     if info_str:
-        canvas.create_text(total_w / 2, 35, text=info_str,
+        canvas.create_text(total_w / 2, 35, text=info_str,   # 텍스트 그리기
                            fill="black", font=("맑은 고딕", 11, "bold"), anchor="center")
 
     if n == 0:
-        canvas.create_text(total_w / 2, 110, text="정류소 정보가 없습니다.",
-                           font=("맑은 고딕", 11), fill="#555", anchor="n")
-        canvas.config(width=total_w)
+        canvas.create_text(total_w / 2, 110, text="정류소 정보가 없습니다.",   # 텍스트 그리기
+                           font=("맑은 고딕", 11), fill="#555", anchor="n")   # 위쪽 정렬
+        canvas.config(width=total_w)   # 캔버스 너비 설정
         return [], total_w, 150
 
+    # 노선 유형에 맞는 선 색상 선택 ("3"=간선 파란색, "4"=지선 초록색, "6"=광역 빨간색 등)
     line_color = ROUTE_TYPE_COLOR.get(route_type, DEFAULT_LINE_COLOR)
+    # 회차 정류소 이후 구간을 어두운 색으로 표시하여 방향을 시각적으로 구분합니다.
     line_dark  = _darken_color(line_color, 0.58)
 
-    turn_idx = next((i for i, st in enumerate(stations) if st["transYn"] == "Y"), None)
+    # transYn == "Y": 회차 정류소 — 버스가 방향을 바꾸는 지점
+    # turn_idx: 회차 정류소의 인덱스 번호, 없으면 None
+    turn_idx = next((i for i, st in enumerate(stations) if st["transYn"] == "Y"), None)  # 리스트를 (인덱스, 값) 쌍으로 순회
 
-    canvas.update_idletasks()
-    canvas.yview_moveto(0)
+    canvas.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+    canvas.yview_moveto(0)   # 세로 스크롤을 맨 위로 이동
 
+    # 전체 정류소를 몇 행(줄)으로 나눌지 계산합니다.
     rows  = (n + STOPS_PER_ROW - 1) // STOPS_PER_ROW
+
+    # 각 정류소의 캔버스 좌표(x, y)를 ㄹ자형으로 계산합니다.
+    # 짝수 행: 왼→오 / 홀수 행: 오→왼 — 행 끝에서 자연스럽게 아래 행으로 연결됩니다.
     coords = []
     for i in range(n):
-        row_idx = i // STOPS_PER_ROW
-        col_idx = i %  STOPS_PER_ROW
+        row_idx = i // STOPS_PER_ROW   # 몇 번째 행인지 (0부터)
+        col_idx = i %  STOPS_PER_ROW   # 이 행에서 몇 번째 칸인지 (0부터)
+        # 짝수 행: 왼→오 (col_idx 순서대로), 홀수 행: 오→왼 (col_idx를 뒤집어서)
         x = (PAD_X + col_idx * CELL_W if row_idx % 2 == 0
              else PAD_X + (STOPS_PER_ROW - 1 - col_idx) * CELL_W)
-        y = PAD_Y + row_idx * CELL_H
+        y = PAD_Y + row_idx * CELL_H   # 행 번호 × 행 높이 = Y 좌표
         coords.append((x, y))
 
     LINE_W = 3
@@ -351,14 +390,14 @@ def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
         seg_color = line_dark if (turn_idx is not None and i >= turn_idx) else line_color
         same_row  = (i // STOPS_PER_ROW) == ((i + 1) // STOPS_PER_ROW)
         if same_row:
-            canvas.create_line(x1, y1, x2, y2, fill=seg_color, width=LINE_W, capstyle=tk.ROUND)
+            canvas.create_line(x1, y1, x2, y2, fill=seg_color, width=LINE_W, capstyle=tk.ROUND)   # 선 그리기
         else:
-            canvas.create_line(x1, y1, x1, y2, fill=seg_color, width=LINE_W, capstyle=tk.ROUND)
+            canvas.create_line(x1, y1, x1, y2, fill=seg_color, width=LINE_W, capstyle=tk.ROUND)   # 선 그리기
 
-    for i, (st, (x, y)) in enumerate(zip(stations, coords)):
+    for i, (st, (x, y)) in enumerate(zip(stations, coords)):  # 리스트를 (인덱스, 값) 쌍으로 순회
         is_first   = (i == 0)
         is_last    = (i == n - 1)
-        is_turn    = (st["transYn"] == "Y")
+        is_turn    = (st["transYn"] == "Y")   # 회차 정류소 여부
         after_turn = (turn_idx is not None and i > turn_idx)
         seg_color  = line_dark if after_turn else line_color
         name_disp  = _truncate_name(st["name"])
@@ -377,22 +416,22 @@ def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
             r, c_fill, c_out = CIRCLE_R, "#FFFFFF", seg_color
             label_inside, t_color, fsize, fbold = str(i + 1), MAP_TEXT_COLOR, 6, ""
 
-        canvas.create_oval(x-r, y-r, x+r, y+r, fill=c_fill, outline=c_out, width=2)
+        canvas.create_oval(x-r, y-r, x+r, y+r, fill=c_fill, outline=c_out, width=2)  # 정류소 원 그리기 (중심±cr 범위)
         ifont = ("맑은 고딕", fsize, fbold) if fbold else ("맑은 고딕", fsize)
-        canvas.create_text(x, y, text=label_inside, font=ifont, fill=t_color)
+        canvas.create_text(x, y, text=label_inside, font=ifont, fill=t_color)   # 텍스트 그리기
 
         tx, ty  = x + TEXT_X_OFFSET, y - r - TEXT_GAP
         nfont   = ("맑은 고딕", fsize, fbold) if fbold else ("맑은 고딕", fsize)
         ncolor  = (t_color if (is_first or is_last or is_turn)
                    else (line_dark if after_turn else MAP_TEXT_COLOR))
-        canvas.create_text(tx, ty, text=name_disp, font=nfont, fill=ncolor,
-                           angle=45, anchor="sw")
+        canvas.create_text(tx, ty, text=name_disp, font=nfont, fill=ncolor,   # 텍스트 그리기
+                           angle=45, anchor="sw")  # 45도 기울여서 정류소 원과 겹치지 않게
 
     bus_positions_info = []
     if buses:
-        if not hasattr(canvas, '_bus_imgs'):
+        if not hasattr(canvas, '_bus_imgs'):  # 객체에 특정 속성이 있는지 확인
             canvas._bus_imgs = []
-        canvas._bus_imgs.clear()
+        canvas._bus_imgs.clear()  # 딕셔너리·집합의 모든 항목 삭제
         try:
             bus_photo = _make_bus_photo()
             canvas._bus_imgs.append(bus_photo)
@@ -401,21 +440,21 @@ def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
 
         from collections import defaultdict
         raw_info = []
-        for b_idx, bus in enumerate(buses):
+        for b_idx, bus in enumerate(buses):  # 리스트를 (인덱스, 값) 쌍으로 순회
             last_stn_id  = bus["lastStnId"]
-            raw_plain_no = bus["plainNo"].replace("서울", "").strip()
-            is_last_bus  = (bus.get("islastyn") == "1")
+            raw_plain_no = bus["plainNo"].replace("서울", "").strip()  # 앞뒤 공백 제거
+            is_last_bus  = (bus.get("islastyn") == "1")  # 이 버스가 막차인지 여부
             try:    sect_m = float(bus["sectDist"]) * 1000.0
             except: sect_m = 0.0
 
-            from_idx = next((i for i, st in enumerate(stations)
-                             if st.get("station", "") == last_stn_id), None)
+            from_idx = next((i for i, st in enumerate(stations)  # 리스트를 (인덱스, 값) 쌍으로 순회
+                             if st.get("station", "") == last_stn_id), None)  # 키가 없으면 빈 문자열 반환
             if from_idx is None:
                 continue
-            to_idx = from_idx + 1 if from_idx + 1 < n else from_idx
+            to_idx = from_idx + 1 if from_idx + 1 < n else from_idx  # 버스가 향하는 다음 정류소 인덱스
             try:    seg_dist_m = float(stations[to_idx]["fullSectDist"])
             except: seg_dist_m = 0.0
-            ratio = (min(sect_m / seg_dist_m, 1.0)
+            ratio = (min(sect_m / seg_dist_m, 1.0)  # 두 정류소 사이에서 버스의 위치 비율 (0.0~1.0)
                      if seg_dist_m > 0 and to_idx != from_idx else 0.0)
 
             x1, y1 = coords[from_idx]
@@ -425,7 +464,7 @@ def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
             else:
                 bx, by = x1, y1 + (y2 - y1) * ratio
 
-            try:    seconds = int(bus.get("lastStTm", 0))
+            try:    seconds = int(bus.get("lastStTm", 0))  # 키가 없으면 0 반환
             except: seconds = 0
 
             bus_tag = f"bus_tag_{b_idx}"
@@ -441,91 +480,102 @@ def _draw_route(canvas, stations, route_type="3", buses=None, info_str=""):
                 "congestion": bus.get("congestion", "0"),
             })
 
+        # ── 버스 레이블(차량번호) 겹침 방지 알고리즘 ──
+        # 같은 Y 좌표 근처(±12픽셀)에 여러 버스가 있으면 레이블이 겹칩니다.
+        # 이를 해결하기 위해 같은 Y 그룹끼리 묶고, X를 15픽셀씩 띄웁니다.
+        # SEP: 같은 줄 버스 레이블 최소 간격(픽셀)
+        # Y_THRESH: 같은 줄로 묶을 Y 좌표 허용 오차(픽셀)
         SEP, Y_THRESH = 15, 12
-        groups, group_keys = defaultdict(list), []
-        for k in sorted(range(len(raw_info)), key=lambda k: raw_info[k]["by"]):
-            b = raw_info[k]
-            placed = False
-            for gy in group_keys:
-                if abs(b["by"] - gy) <= Y_THRESH:
-                    groups[gy].append(b); placed = True; break
-            if not placed:
-                group_keys.append(b["by"]); groups[b["by"]].append(b)
+        groups, group_keys = defaultdict(list), []  # groups: Y그룹 → 버스 목록 / group_keys: 그룹 Y 좌표 목록 (순서 유지)
+        for k in sorted(range(len(raw_info)), key=lambda k: raw_info[k]["by"]):  # 리스트를 오름차순으로 정렬
+            b = raw_info[k]   # k번째 버스 정보 딕셔너리
+            placed = False  # 이 버스를 기존 그룹에 넣었는지 추적
+            for gy in group_keys:  # 기존 그룹들의 Y 좌표를 순서대로 확인
+                if abs(b["by"] - gy) <= Y_THRESH:  # Y 좌표 차이가 허용 오차 이내면 같은 줄로 간주
+                    groups[gy].append(b); placed = True; break  # 기존 그룹에 추가
+            if not placed:   # 기존 그룹에 맞는 곳이 없었다 → 새 그룹 생성
+                group_keys.append(b["by"]); groups[b["by"]].append(b)  # 새 그룹 생성
 
-        label_offsets = {}
-        for gy, members in groups.items():
-            prev_x = None
-            for b in sorted(members, key=lambda m: m["bx"]):
-                lx = b["bx"]
-                if prev_x is not None and lx < prev_x + SEP:
-                    lx = prev_x + SEP
-                prev_x = lx
-                label_offsets[b["bus_tag"]] = lx - b["bx"]
+        # label_offsets: 각 버스 태그 → 레이블 X 이동량 딕셔너리
+        # 겹치는 버스 레이블을 오른쪽으로 밀어서 겹침을 해소합니다.
+        label_offsets = {}   # 버스태그 → X 이동량 딕셔너리
+        for gy, members in groups.items():  # 딕셔너리를 (키, 값) 튜플 쌍으로 순회
+            prev_x = None   # 이전 레이블 X 위치 (초기엔 없음)
+            for b in sorted(members, key=lambda m: m["bx"]):  # 리스트를 오름차순으로 정렬
+                lx = b["bx"]   # 이 버스 레이블의 X 좌표 (초기값 = 버스 위치)
+                if prev_x is not None and lx < prev_x + SEP:  # 이전 레이블과 너무 가까우면
+                    lx = prev_x + SEP  # 최소 간격만큼 오른쪽으로 밀기
+                prev_x = lx   # 현재 레이블 X를 이전 위치로 업데이트
+                label_offsets[b["bus_tag"]] = lx - b["bx"]  # 이동량(원래 X - 새 X) 저장
 
-        for b in raw_info:
-            bx, by   = b["bx"], b["by"]
-            bus_tag  = b["bus_tag"]
-            canvas._tooltip_dict[bus_tag] = {
-                "sec": b["seconds"],
-                "congestion": b.get("congestion", "0"),
-                "plain_no": b["raw_plain_no"],
+        # ── 캔버스에 버스 아이콘 + 레이블 그리기 ──
+        for b in raw_info:   # 모든 버스를 순서대로 그립니다
+            bx, by   = b["bx"], b["by"]   # 이 버스의 캔버스 X, Y 좌표
+        for b in raw_info:   # 모든 버스를 순서대로 그립니다
+            bx, by   = b["bx"], b["by"]   # 이 버스의 캔버스 좌표
+            bus_tag  = b["bus_tag"]   # 이 버스의 고유 캔버스 태그
+            canvas._tooltip_dict[bus_tag] = {  # 이 버스의 툴팁 정보를 등록 (마우스 오버 시 표시)
+                "sec": b["seconds"],  # 종점까지 남은 시간(초)
+                "congestion": b.get("congestion", "0"),   # 혼잡도 코드 (툴팁에 표시)
+                "plain_no": b["raw_plain_no"],  # 차량번호 문자열
             }
-            if bus_photo:
-                canvas.create_image(int(bx), int(by), image=bus_photo,
-                                    anchor="center", tags=(bus_tag, "has_tooltip"))
+            if bus_photo:   # PIL 있을 때: 버스 사진 아이콘 사용
+                canvas.create_image(int(bx), int(by), image=bus_photo,  # PIL 있을 때: 버스 사진 아이콘을 그립니다
+                                    anchor="center", tags=(bus_tag, "has_tooltip"))  # bus_tag: 이 아이콘의 고유 태그 / has_tooltip: 툴팁 이벤트 연결용 태그
             else:
-                canvas.create_rectangle(bx-8, by-5, bx+8, by+5,
-                                        fill=line_color, outline="white", width=1,
+                canvas.create_rectangle(bx-8, by-5, bx+8, by+5,  # PIL 없을 때: 간단한 직사각형으로 버스를 표시
+                                        fill=line_color, outline="white", width=1,   # 박스: 노선 색상 배경 + 흰색 테두리
                                         tags=(bus_tag, "has_tooltip"))
-            dx     = label_offsets.get(bus_tag, 0)
-            base_x = int(bx) + 10 + dx
-            base_y = int(by) - 3
-            canvas.create_text(base_x, base_y, text=b["raw_plain_no"],
-                               font=("맑은 고딕", 10, "bold"), fill="#1A1A1A",
-                               angle=45, anchor="sw", tags=(bus_tag, "has_tooltip"))
-            if b["is_last_bus"]:
-                canvas.create_text(base_x + 17, base_y - 12, text="          (막차)",
-                                   font=("맑은 고딕", 8, "bold"), fill="#1A1A1A",
-                                   angle=45, anchor="center", tags=(bus_tag, "has_tooltip"))
-            if b["is_low"]:
-                canvas.create_text(int(bx), int(by) + 10, text="저상",
-                                   font=("맑은 고딕", 8), fill="#1A1A1A", anchor="n",
+            dx     = label_offsets.get(bus_tag, 0)  # 키가 없으면 0 반환
+            base_x = int(bx) + 10 + dx  # 레이블 X: 아이콘 오른쪽 10픽셀 + 겹침 방지 이동량
+            base_y = int(by) - 3  # 레이블 Y: 아이콘 중심보다 약간 위
+            canvas.create_text(base_x, base_y, text=b["raw_plain_no"],   # 텍스트 그리기
+                               font=("맑은 고딕", 10, "bold"), fill="#1A1A1A",   # 차량번호 텍스트: 굵은 고딕 10pt, 거의 검정색
+                               angle=45, anchor="sw", tags=(bus_tag, "has_tooltip"))  # 45도 기울여서 정류소 원과 겹치지 않게
+            if b["is_last_bus"]:  # 막차이면 "(막차)" 텍스트 추가
+                canvas.create_text(base_x + 17, base_y - 12, text="          (막차)",   # 텍스트 그리기
+                                   font=("맑은 고딕", 8, "bold"), fill="#1A1A1A",   # 막차 텍스트: 굵은 고딕 8pt
+                                   angle=45, anchor="center", tags=(bus_tag, "has_tooltip"))  # bus_tag: 이 아이콘의 고유 태그 / has_tooltip: 툴팁 이벤트 연결용 태그
+            if b["is_low"]:  # 저상버스이면 "저상" 텍스트 추가
+                canvas.create_text(int(bx), int(by) + 10, text="저상",   # 텍스트 그리기
+                                   font=("맑은 고딕", 8), fill="#1A1A1A", anchor="n",   # 위쪽 정렬
                                    tags=(bus_tag, "has_tooltip"))
-            bus_positions_info.append(b)
+            bus_positions_info.append(b)  # 반환값 목록에 추가 (하단 도착 예정 테이블에 사용)
 
+    # ── 행 끝마다 다음 행으로 내려가는 ↓ 화살표 그리기 ──
+    # 행이 2개 이상일 때만 실행됩니다.
     for r_idx in range(rows - 1):
-        row_y  = PAD_Y + r_idx * CELL_H
-        next_y = PAD_Y + (r_idx + 1) * CELL_H
-        ax     = ((PAD_X + (STOPS_PER_ROW - 1) * CELL_W + 7) if r_idx % 2 == 0
+        row_y  = PAD_Y + r_idx * CELL_H  # 현재 행의 Y 좌표
+        next_y = PAD_Y + (r_idx + 1) * CELL_H  # 다음 행의 Y 좌표
+        ax     = ((PAD_X + (STOPS_PER_ROW - 1) * CELL_W + 7) if r_idx % 2 == 0  # 화살표 X: 짝수행이면 오른쪽 끝, 홀수행이면 왼쪽 끝
                   else (PAD_X - 7))
-        last_in_row = min((r_idx + 1) * STOPS_PER_ROW - 1, n - 1)
-        arr_color   = (line_dark if (turn_idx is not None and last_in_row >= turn_idx)
+        last_in_row = min((r_idx + 1) * STOPS_PER_ROW - 1, n - 1)  # 이 행의 마지막 정류소 인덱스 (행이 다 차지 않을 수 있으므로 min 사용)
+        arr_color   = (line_dark if (turn_idx is not None and last_in_row >= turn_idx)  # 화살표 색상: 회차 이후면 어두운 색
                        else line_color)
-        canvas.create_text(ax, (row_y + next_y) / 2, text="↓",
-                           font=("맑은 고딕", 11, "bold"), fill=arr_color)
+        canvas.create_text(ax, (row_y + next_y) / 2, text="↓",   # 텍스트 그리기
+                           font=("맑은 고딕", 11, "bold"), fill=arr_color)   # 화살표 문자(↓): 굵은 11pt, 노선 색상
 
-    canvas.config(width=total_w)
+    canvas.config(width=total_w)   # 캔버스 너비 설정
     map_end_y = PAD_Y + (rows - 1) * CELL_H
     return bus_positions_info, total_w, map_end_y
 
-
-class AutoScrollbar(ttk.Scrollbar):
-    """내용이 없을 때 자동으로 숨겨지는 스크롤바."""
-    def set(self, lo, hi):
-        if float(lo) <= 0.0 and float(hi) >= 1.0:
-            self.grid_remove()
+class AutoScrollbar(ttk.Scrollbar):  # 내용이 넘칠 때만 스크롤바가 나타나는 자동 스크롤바 클래스
+    
+    def set(self, lo, hi):  # 스크롤 위치(lo=시작, hi=끝) 설정 — 1.0이면 내용이 다 보임
+        if float(lo) <= 0.0 and float(hi) >= 1.0:  # 내용이 전부 보이면 스크롤바 숨김
+            self.grid_remove()  # 스크롤바를 화면에서 숨김 (그리드 공간은 유지)
         else:
-            self.grid()
-        super().set(lo, hi)
+            self.grid()  # 스크롤바를 다시 표시
+        super().set(lo, hi)   # 변수 값 설정
 
-
-class RouteMapPanel(tk.Frame):
-    """노선도 패널: 상단 노선정보 + ㄹ자형 노선도 캔버스 + 하단 도착예정 테이블."""
+class RouteMapPanel(tk.Frame):  # 노선도 패널 — 하나의 노선 지도를 담당하는 위젯
+    
 
     def __init__(self, parent, route_rnm, **kwargs):
-        super().__init__(parent, bg=MAP_BG, **kwargs)
+        """2-9-1. 패널 초기화. route_rnm: 이 패널이 담당하는 노선명."""
+        super().__init__(parent, bg=MAP_BG, **kwargs)  # 부모 클래스(tk.Frame)의 초기화 호출
         self.route_rnm        = route_rnm
-        self._stations        = []
+        self._stations        = []  # 정류소 목록 (load_route로 설정)
         self._current_rtype   = "3"
         self._current_length  = ""
         self._table_time_labels = []
@@ -533,48 +583,60 @@ class RouteMapPanel(tk.Frame):
         self._tick_tooltip_times()
 
     def _build(self):
+        """2-9-2. 캔버스·스크롤바·초기 안내 텍스트를 구성합니다."""
         cf = tk.Frame(self, bg=MAP_BG)
-        cf.pack(fill="both", expand=True)
-        cf.grid_rowconfigure(0, weight=1)
-        cf.grid_columnconfigure(0, weight=1)
-        cf.grid_columnconfigure(1, weight=0)
+        cf.pack(fill="both", expand=True)   # 위젯이 가로·세로 모두 꽉 채우며 창 크기에 맞게 늘어남
+        cf.grid_rowconfigure(0, weight=1)   # 캔버스 내부 행 확장 설정
+        cf.grid_columnconfigure(0, weight=1)   # 캔버스 내부 열 확장 설정
+        cf.grid_columnconfigure(1, weight=0)   # 캔버스 내부 열 확장 설정
 
-        self.canvas = tk.Canvas(cf, bg=MAP_BG, highlightthickness=0)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.canvas = tk.Canvas(cf, bg=MAP_BG, highlightthickness=0)  # 노선도를 그릴 캔버스 위젯
+        self.canvas.grid(row=0, column=0, sticky="nsew")   # 상하좌우 모두 꽉 채움
 
-        self.v_sc = AutoScrollbar(cf, orient="vertical",   command=self.canvas.yview)
-        self.v_sc.grid(row=0, column=1, sticky="ns")
-        self.h_sc = AutoScrollbar(cf, orient="horizontal", command=self.canvas.xview)
-        self.h_sc.grid(row=1, column=0, sticky="ew")
+        self.v_sc = AutoScrollbar(cf, orient="vertical",   command=self.canvas.yview)   # 세로 자동 스크롤바 — 노선이 길어 캔버스가 세로로 넘칠 때 표시
+        self.v_sc.grid(row=0, column=1, sticky="ns")   # 그리드 레이아웃의 (0,1) 위치에 배치 (오른쪽, 세로로 채움)
+        self.h_sc = AutoScrollbar(cf, orient="horizontal", command=self.canvas.xview)   # 가로 자동 스크롤바 — 노선이 가로로 넘칠 때 표시
+        self.h_sc.grid(row=1, column=0, sticky="ew")   # 그리드 레이아웃의 (1,0) 위치에 배치 (아래쪽, 가로로 채움)
 
-        self.canvas.configure(xscrollcommand=self.h_sc.set,
+        self.canvas.configure(xscrollcommand=self.h_sc.set,   # 캔버스 스크롤 이동 시 스크롤바도 함께 이동
                               yscrollcommand=self.v_sc.set)
+        # table_frame: 캔버스 위에 올리는 Frame — 정류소 도착 예정 테이블을 담습니다
         self.table_frame = tk.Frame(self.canvas, bg=MAP_BG)
 
+        # 마우스 휠로 캔버스를 스크롤합니다.
+        # e.delta: 휠 이동량 (Windows: ±120 단위) / //120: 방향만 추출 (-1=아래, +1=위)
+        # yview_scroll(-1, "units"): 아래로 스크롤 / +1: 위로 스크롤
+        # winfo_ismapped(): 스크롤바가 실제로 화면에 보일 때만 스크롤 동작
         self.canvas.bind("<MouseWheel>",
-            lambda e: self.v_sc.winfo_ismapped() and
+            lambda e: self.v_sc.winfo_ismapped() and   # 위젯이 실제로 화면에 표시되고 있으면 True
                       self.canvas.yview_scroll(-1*(e.delta//120), "units"))
+        # Shift+휠: 가로(X) 스크롤
         self.canvas.bind("<Shift-MouseWheel>",
-            lambda e: self.h_sc.winfo_ismapped() and
+            lambda e: self.h_sc.winfo_ismapped() and   # 위젯이 실제로 화면에 표시되고 있으면 True
                       self.canvas.xview_scroll(-1*(e.delta//120), "units"))
 
-        self.canvas.config(width=718)
-        self.canvas.create_text(359, 110, text="노선 데이터 로딩 중...",
+        self.canvas.config(width=718)   # 캔버스 너비 설정
+        self.canvas.create_text(359, 110, text="노선 데이터 로딩 중...",   # 텍스트 그리기
                                 font=("맑은 고딕", 12), fill="#777",
-                                justify="center", anchor="n")
+                                justify="center", anchor="n")   # 위쪽 정렬
 
-    def load_route(self, stations, rtype="3", length=""):
-        self._stations       = stations
+    def load_route(self, stations, rtype="3", length=""):  # 정류소 목록을 로드하고 노선도를 초기 렌더링
+        """2-9-3. 정류소 목록·노선타입·거리를 설정하고 초기 노선도를 렌더링합니다."""
+        self._stations       = stations   # 정류소 목록 저장 (update_buses에서 재사용)
         self._current_rtype  = rtype
         self._current_length = length
         self._redraw(buses=None)
 
-    def update_buses(self, buses):
+    def update_buses(self, buses):  # 버스 위치 목록을 갱신하고 노선도를 다시 그림
+        """2-9-4. POS1 응답에서 변환된 버스 위치 목록으로 노선도를 갱신합니다.
+        buses=[] 이면 아이콘 제거, buses=[...] 이면 위치에 아이콘 표시합니다.
+        """
         if not self._stations:
             return
         self._redraw(buses=buses)
 
     def _redraw(self, buses=None):
+        """2-9-5. 노선 정보와 버스 위치로 노선도를 전체 다시 그립니다."""
         typ_str  = ROUTE_TYPE_LABEL.get(self._current_rtype, "기타")
         dist_str = self._current_length if self._current_length else "?"
         bus_cnt  = len(buses) if buses else 0
@@ -587,75 +649,82 @@ class RouteMapPanel(tk.Frame):
         self._build_table(buses_info, total_w, map_end_y)
 
     def _build_table(self, buses_info, total_w, map_end_y):
-        for w in self.table_frame.winfo_children():
-            w.destroy()
+        """2-9-6. 노선도 하단에 도착 예정 버스 번호와 남은 시간 테이블을 생성합니다."""
+        for w in self.table_frame.winfo_children():   # 이 위젯의 직접 자식 위젯 목록
+            w.destroy()  # 창 또는 위젯을 완전히 제거
         self.canvas.delete("table_win")
         self._table_time_labels = []
 
         if not buses_info:
-            self.canvas.config(scrollregion=(0, 0, total_w, map_end_y + 40))
+            self.canvas.config(scrollregion=(0, 0, total_w, map_end_y + 40))   # 스크롤 가능한 전체 영역 크기 설정
             return
 
-        sorted_b  = sorted(buses_info, key=lambda x: (x['from_idx'], x['ratio']), reverse=True)
+        sorted_b  = sorted(buses_info, key=lambda x: (x['from_idx'], x['ratio']), reverse=True)  # 리스트를 오름차순으로 정렬
         last_bus  = next((b for b in sorted_b if b['is_last_bus']), None)
         reg_buses = [b for b in sorted_b if not b['is_last_bus']][:5]
         columns   = reg_buses + ([last_bus] if last_bus else [])
         if not columns:
-            self.canvas.config(scrollregion=(0, 0, total_w, map_end_y + 40))
+            self.canvas.config(scrollregion=(0, 0, total_w, map_end_y + 40))   # 스크롤 가능한 전체 영역 크기 설정
             return
 
         _lbl = lambda txt, **kw: tk.Label(self.table_frame, text=txt, relief="solid",
                                            bd=1, padx=5, pady=4, fg="black",
                                            **{"font": ("맑은 고딕", 8), **kw})
         _lbl("종점 도착 예정 버스 번호", bg="#E8E8E8", font=("맑은 고딕", 8, "bold")).grid(
-            row=0, column=0, sticky="nsew")
+            row=0, column=0, sticky="nsew")   # 상하좌우 모두 꽉 채움
         _lbl("종점 도착까지 남은 시간", bg="#E8E8E8", font=("맑은 고딕", 8, "bold")).grid(
-            row=1, column=0, sticky="nsew")
+            row=1, column=0, sticky="nsew")   # 상하좌우 모두 꽉 채움
 
-        for i, bus in enumerate(columns):
+        for i, bus in enumerate(columns):  # 리스트를 (인덱스, 값) 쌍으로 순회
             title = f"{bus['raw_plain_no']} (막차)" if bus['is_last_bus'] else bus['raw_plain_no']
             _lbl(title, bg="#FFFFFF", font=("맑은 고딕", 8, "bold")).grid(
-                row=0, column=i+1, sticky="nsew")
-            _tinfo2 = self.canvas._tooltip_dict.get(bus['bus_tag'], 0)
-            sec = _tinfo2["sec"] if isinstance(_tinfo2, dict) else _tinfo2
+                row=0, column=i+1, sticky="nsew")   # 상하좌우 모두 꽉 채움
+            _tinfo2 = self.canvas._tooltip_dict.get(bus['bus_tag'], 0)  # 키가 없으면 0 반환
+            sec = _tinfo2["sec"] if isinstance(_tinfo2, dict) else _tinfo2  # 객체가 특정 클래스의 인스턴스인지 확인
             tlbl = _lbl(_format_remain_time(sec), bg="#FFFFFF")
-            tlbl.grid(row=1, column=i+1, sticky="nsew")
+            tlbl.grid(row=1, column=i+1, sticky="nsew")   # 상하좌우 모두 꽉 채움
             self._table_time_labels.append({"lbl": tlbl, "tag": bus['bus_tag']})
-            self.table_frame.grid_columnconfigure(i+1, weight=1)
+            self.table_frame.grid_columnconfigure(i+1, weight=1)   # 캔버스 내부 열 확장 설정
 
-        self.table_frame.grid_columnconfigure(0, weight=0)
+        self.table_frame.grid_columnconfigure(0, weight=0)   # 캔버스 내부 열 확장 설정
         table_y = map_end_y + 40
         self.canvas.create_window(total_w // 2, table_y, window=self.table_frame,
-                                  anchor="n", tags="table_win")
-        self.table_frame.update_idletasks()
-        table_h = self.table_frame.winfo_reqheight()
-        self.canvas.config(scrollregion=(0, 0, total_w, table_y + table_h + 30))
+                                  anchor="n", tags="table_win")   # 위쪽 정렬
+        self.table_frame.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        table_h = self.table_frame.winfo_reqheight()   # 위젯이 필요로 하는 최소 높이
+        self.canvas.config(scrollregion=(0, 0, total_w, table_y + table_h + 30))   # 스크롤 가능한 전체 영역 크기 설정
 
-    def pause_tick(self):
+    def pause_tick(self):  # 카운트다운 타이머 정지
+        """2-9-7. 기록 중지 시 남은 시간 카운트다운을 일시 정지합니다."""
         self._tick_paused = True
 
-    def resume_tick(self):
+    def resume_tick(self):  # 카운트다운 타이머 재개
+        """2-9-8. 기록 시작 시 남은 시간 카운트다운을 재개합니다."""
         self._tick_paused = False
 
-    def _tick_tooltip_times(self):
-        if not getattr(self, '_tick_paused', False):
-            if hasattr(self.canvas, '_tooltip_dict'):
+    def _tick_tooltip_times(self):  # 1초마다 버스 도착 예정 시간을 갱신하는 타이머 함수
+        """2-9-9. 1초마다 호출되어 테이블과 툴팁의 남은 시간을 감소시킵니다.
+        after(1000, self._tick_tooltip_times)로 무한 반복됩니다.
+        _tick_paused=True이면 감소 없이 루프만 유지합니다.
+        """
+        if not getattr(self, '_tick_paused', False):  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
+            if hasattr(self.canvas, '_tooltip_dict'):  # 객체에 특정 속성이 있는지 확인
                 for tag in self.canvas._tooltip_dict:
                     info = self.canvas._tooltip_dict[tag]
-                    if isinstance(info, dict):
+                    if isinstance(info, dict):  # 객체가 특정 클래스의 인스턴스인지 확인
                         if info["sec"] > 0: info["sec"] -= 1
                     elif info > 0:
                         self.canvas._tooltip_dict[tag] -= 1
-                hover_tag = getattr(self.canvas, '_current_hover_tag', None)
+                hover_tag = getattr(self.canvas, '_current_hover_tag', None)  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
                 if hover_tag and hover_tag in self.canvas._tooltip_dict:
                     info = self.canvas._tooltip_dict[hover_tag]
-                    sec  = info["sec"] if isinstance(info, dict) else info
-                    if hasattr(self.canvas, '_tooltip_lbl'):
-                        _CONG = {"3":"여유","4":"보통","5":"혼잡"}
+                    sec  = info["sec"] if isinstance(info, dict) else info  # 객체가 특정 클래스의 인스턴스인지 확인
+                    if hasattr(self.canvas, '_tooltip_lbl'):  # 객체에 특정 속성이 있는지 확인
+                        _CONG = {"3":"여유","4":"보통","5":"혼잡"}   # 일반 노선 혼잡도 코드 → 텍스트 딕셔너리
                         _inf  = self.canvas._tooltip_dict.get(hover_tag, {})
-                        _pno  = _inf.get("plain_no","") if isinstance(_inf,dict) else ""
-                        _cong_raw = str(_inf.get("congestion","0") if isinstance(_inf,dict) else "0")
-                        _rtype = getattr(self, "_current_rtype", "3")
+                        _pno  = _inf.get("plain_no","") if isinstance(_inf,dict) else ""  # 키가 없으면 빈 문자열 반환
+                        _cong_raw = str(_inf.get("congestion","0") if isinstance(_inf,dict) else "0")  # 객체가 특정 클래스의 인스턴스인지 확인
+                        _rtype = getattr(self, "_current_rtype", "3")  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
                         if _rtype == "6":
                             if _cong_raw == "99" or _cong_raw == "0":
                                 _cl = ""
@@ -663,185 +732,194 @@ class RouteMapPanel(tk.Frame):
                                 try:    _cl = f"잔여{int(_cong_raw)}석"
                                 except: _cl = ""
                         else:
-                            _cl = _CONG.get(_cong_raw, "")
+                            _cl = _CONG.get(_cong_raw, "")  # 키가 없으면 빈 문자열 반환
                         _l1   = (f"{_fmt_bus_no(_pno)}     {_cl}"
                                  if _cl else _fmt_bus_no(_pno))
                         self.canvas._tooltip_lbl.config(
                             text=f"{_l1}\n종점도착까지 남은 시간 : {_format_remain_time(sec)}")
             for item in self._table_time_labels:
                 tag = item["tag"]
-                if hasattr(self.canvas, '_tooltip_dict') and tag in self.canvas._tooltip_dict:
+                if hasattr(self.canvas, '_tooltip_dict') and tag in self.canvas._tooltip_dict:  # 객체에 특정 속성이 있는지 확인
                     _tinfo = self.canvas._tooltip_dict[tag]
-                    _tsec  = _tinfo["sec"] if isinstance(_tinfo, dict) else _tinfo
+                    _tsec  = _tinfo["sec"] if isinstance(_tinfo, dict) else _tinfo  # 객체가 특정 클래스의 인스턴스인지 확인
                     item["lbl"].config(text=_format_remain_time(_tsec))
-        self.after(1000, self._tick_tooltip_times)
-
+        self.after(1000, self._tick_tooltip_times)  # 1초 후 자기 자신을 다시 호출 (무한 반복 타이머)
 
 # ============================================================
-# 3. 메인 프로그램 클래스
+# 3. 메인 프로그램 클래스 DJBusRecorder
+# ─────────────────────────────────────────────────────────────
+# 프로그램의 핵심 로직 전체를 담당하는 클래스입니다.
+# DJ 버전과 달리 노선을 하드코딩하지 않고, [노선 검색] 버튼으로
+# 사용자가 원하는 노선을 동적으로 추가합니다.
+# API 인증키는 Seoul_Bus_Config.ini에 저장하며, 암호화 선택적 지원합니다.
 # ============================================================
 
 class DJBusRecorder:
+    """서울시내버스 노선 운행기록 수집 프로그램의 메인 클래스.
+
+    DJ 버전과의 주요 차이점:
+        · 노선을 사용자가 직접 검색하여 추가합니다 (동적 노선 구성)
+        · API 인증키를 Seoul_Bus_Config.ini 파일로 관리합니다.
+        · cryptography 패키지가 있으면 API 키를 암호화하여 저장합니다.
+        · 즐겨찾기 노선을 설정 파일에 저장하고 복원합니다.
+        · 노선 수에 제한이 없으며, 처음에는 빈 상태로 시작합니다.
+    """
 
     def __init__(self, root):
         self.root = root
-        self.root.title("서울시내버스 노선 운행기록 수집 프로그램 v1.09")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.route_map_panels   = {}
-        self.route_map_current  = None
+        self.root.title("서울시내버스 노선 운행기록 수집 프로그램 v1.13")  # 창 제목 표시줄 텍스트 설정
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)  # 창의 X 버튼 클릭 이벤트에 함수 연결
+        self.route_map_panels   = {}   # 노선명 → RouteMapPanel 인스턴스 딕셔너리
+        self.route_map_current  = None   # 현재 화면에 표시 중인 노선명
 
-        # ── 프로그램 아이콘 적용 ──
         try:
             _icon_data = base64.b64decode(ICON_B64)
-            if _PIL_OK:
-                _pil_img  = Image.open(io.BytesIO(_icon_data))
-                _tk_icon  = ImageTk.PhotoImage(_pil_img)
+            if _PIL_OK:  # PIL이 설치된 경우: 고품질 이미지 처리
+                _pil_img  = Image.open(io.BytesIO(_icon_data))   # Base64 아이콘 데이터를 PIL 이미지로 열기
+                _tk_icon  = ImageTk.PhotoImage(_pil_img)   # PIL 이미지를 tkinter 아이콘용으로 변환
             else:
-                _tk_icon  = tk.PhotoImage(data=ICON_B64)
-            self.root.iconphoto(True, _tk_icon)
-            self._app_icon = _tk_icon
+                _tk_icon  = tk.PhotoImage(data=ICON_B64)   # PIL 없을 때 tkinter 기본 방식으로 아이콘 로드
+            self.root.iconphoto(True, _tk_icon)   # 창 제목표시줄과 작업표시줄에 아이콘 설정
+            self._app_icon = _tk_icon   # GC 방지용 아이콘 참조 (저장 안 하면 즉시 수거됨)
         except Exception:
             pass
 
-        if getattr(sys, 'frozen', False):
-            # PyInstaller 컴파일 환경
-            # macOS .app 번들: sys.executable = .../MyApp.app/Contents/MacOS/MyApp
-            # .ini 파일은 .app 바깥(사용자가 앱을 놓아둔 폴더)에 있어야 하므로
-            # Contents/MacOS 두 단계 위로 올라간 뒤 다시 상위(.app 바깥)로 이동
-            _exe = os.path.abspath(sys.executable)
+        if getattr(sys, 'frozen', False):  # PyInstaller로 .exe 빌드 시 True, .py 직접 실행 시 False
+            _exe = os.path.abspath(sys.executable)  # 상대 경로를 절대 경로로 변환
             if sys.platform == "darwin" and ".app/Contents/MacOS" in _exe:
-                # .app/Contents/MacOS/실행파일  →  .app 상위 폴더
-                self.current_dir = os.path.dirname(          # .app 폴더
-                    os.path.dirname(                          # Contents 폴더
-                        os.path.dirname(_exe)))               # MacOS 폴더
-                self.current_dir = os.path.dirname(self.current_dir)  # .app 바깥
+                self.current_dir = os.path.dirname(  # 경로에서 디렉토리 부분만 추출
+                    os.path.dirname(  # 경로에서 디렉토리 부분만 추출
+                        os.path.dirname(_exe)))  # 경로에서 디렉토리 부분만 추출
+                self.current_dir = os.path.dirname(self.current_dir)  # 경로에서 디렉토리 부분만 추출
             else:
-                self.current_dir = os.path.dirname(_exe)
+                self.current_dir = os.path.dirname(_exe)  # 경로에서 디렉토리 부분만 추출
         else:
-            self.current_dir = os.path.dirname(os.path.abspath(__file__))
+            self.current_dir = os.path.dirname(os.path.abspath(__file__))  # 경로에서 디렉토리 부분만 추출
 
         # ── 상태 변수 ──
-        self.is_monitoring    = False
-        self._key_main        = API_KEY_MAIN
-        self._key_back        = API_KEY_BACK
-        self._key_limit_notified = False
+        self.is_monitoring    = False   # True: 자동 기록 실행 중
+        self._key_main        = API_KEY_MAIN  # 메인 API 인증키 (평문, 런타임에만 메모리에 존재)
+        self._key_back        = API_KEY_BACK  # 백업 API 인증키
         self._favorites: dict = {}
 
-        self._cfg_file = os.path.join(self.current_dir, "Seoul_Bus_Config.ini")
-        self._load_config()
+        # ── 설정 파일 경로 ──
+        # API 인증키와 즐겨찾기 노선을 이 파일에 저장합니다.
+        self._cfg_file = os.path.join(self.current_dir, "Seoul_Bus_Config.ini")  # 운영체제에 맞는 경로 구분자로 경로를 조합
+        self._load_config()  # 설정 파일(ini)에서 API 키·즐겨찾기 노선 로드
         
-        self._selected_route  = None
-        self.routes           = []
-        self.routes_ready     = False
-        self.refresh_interval = 25
-        self.info_window      = None
+        self._selected_route  = None   # 노선 검색 다이얼로그에서 선택된 노선 정보 (임시 저장)
+        self.routes           = []  # 현재 모니터링 중인 노선 딕셔너리 목록
+        self.routes_ready     = False   # True가 되면 기록 시작 버튼 활성화
+        self.refresh_interval = 25   # API 갱신 주기(초) — 기본 25초
+        self.info_window      = None   # [프로그램 정보] 팝업 창 참조 (중복 생성 방지)
 
         # ── 기록 데이터 ──
         # 형식: (데이터시각, 운행시작/종료, 정류소이름(번호), 노선, 차량번호)
         self.recorded_data       = []
-        self._saved_record_count = 0
+        self._saved_record_count = 0    # 마지막 저장 시의 레코드 수
 
         # ── 중복 방지 캐시 ──
+        # 키: (구분코드, 노선ID, 차량번호) → 값: 마지막 기록 시각(time.time())
         self.last_arrival_logs = {}
 
-        # ── 완주 검증 캐시 ──
-        self.prev_st_passed = {}
+        # ── 출발/운행중 차량 캐시 (v1.11 신규, v1.13 확장) ──
+        # POS1 출발 판정된 차량의 plainNo 캐시. POS2 도착 판정 조건으로 사용됩니다.
+        # 키: (노선ID, 차량번호) → 값: 등록 시각(time.time())
+        # 6시간(21600초) 미사용 시 자동 만료됩니다.
+        self.departed_vehicles = {}
 
-        # ── POS 일시정지 & 공유 캐시 ──
+        # ── POS 일시정지 & 사이클 공유 캐시 ──
+        # pos_suspend_until : 운행종료 확정 노선의 POS 재개 허용 시각
+        # temp_pos1/2_data  : 같은 사이클 안에서 동일 노선 ID의 중복 호출 방지
         self.pos_suspend_until = {}
-        self.pos_resume_logged = set()
-        self.temp_pos1_data    = {}
-        self.temp_pos2_data    = {}
+        self.pos_resume_logged = set()   # POS 재개 로그를 이미 출력한 노선 집합 (중복 로그 방지)
+        self.temp_pos1_data    = {}   # POS1 사이클 내 임시 캐시
+        self.temp_pos2_data    = {}   # POS2 사이클 내 임시 캐시
 
-        # ── [v1.06] POS1 빈 응답 최초 감지 시각 캐시 ──
-        # 키: 노선ID → 값: POS1 응답이 비기 시작한 시각(time.time())
-        # POS1에 차량이 다시 나타나면 해당 키가 삭제됩니다.
-        self.pos_empty_since   = {}
+        # ── 인증키 한도 초과 경고 플래그 ── 하루 한 번만 출력, 자정에 리셋
+        self._key_limit_notified = False   # 하루 1번만 한도초과 경고하기 위한 플래그
 
-        # ── 날짜 추적 ──
-        self._last_date             = datetime.now().date()
-        self._completed_dates_saved = set()
+        self._last_date             = datetime.now().date()  # 현재 날짜+시각을 datetime 객체로 반환
+        self._completed_dates_saved = set()   # 이미 완결 파일로 저장한 영업일 날짜 집합 (재저장 방지)
 
         # ── 스레드 잠금 ──
-        self._save_lock    = threading.Lock()
-        self._refresh_lock = threading.Lock()
+        self._save_lock    = threading.Lock()   # 엑셀 파일 동시 쓰기 방지
+        self._refresh_lock = threading.Lock()   # 갱신 루프 중복 실행 방지
 
         # ── 엑셀 자동 저장 ──
-        self.auto_save_path = None
-        self.can_auto_save  = False
+        self.auto_save_path = None    # 현재 기록 중인 엑셀 파일 경로
+        self.can_auto_save  = False   # 파일 생성 성공 후 True로 전환
 
-        # ── API 호출 횟수 통계 ──
-        self.api_stats_today     = {"POS1": 0, "POS2": 0, "SLST": 0, "RINF": 0, "SRCH": 0, "기타": 0}
-        self.api_stats_yesterday = {"POS1": 0, "POS2": 0, "SLST": 0, "RINF": 0, "SRCH": 0, "기타": 0}
+        # ── API 호출 횟수 통계 (오늘/어제 분리) ──
+        # SRCH: 노선 검색 API 호출 횟수도 포함됩니다.
+        self.api_stats_today     = {"POS1": 0, "POS2": 0, "SLST": 0, "RINF": 0, "SRCH": 0, "기타": 0}   # API 유형별 오늘 호출 횟수 (자정에 0으로 초기화)
+        self.api_stats_yesterday = {"POS1": 0, "POS2": 0, "SLST": 0, "RINF": 0, "SRCH": 0, "기타": 0}   # 어제 API 호출 횟수 (오늘 통계를 초기화하기 전에 복사)
 
-        self.setup_ui()
-        self.routes       = []
-        self.routes_ready = True
-        self.log("노선 검색 버튼으로 노선을 추가하세요.")
-
-    # ──────────────────────────────────────────
-    # UI 구성
-    # ──────────────────────────────────────────
+        self.setup_ui()   # UI 레이아웃 구성 (창·버튼·테이블 등)
+        self.routes       = []  # 현재 모니터링 중인 노선 딕셔너리 목록
+        self.routes_ready = True   # 노선 초기화 완료 → 기록 시작 허용
+        self.log("노선 검색 버튼으로 노선을 추가하세요.")  # 로그창에 메시지 출력
 
     def setup_ui(self):
-        menu_bar = tk.Frame(self.root, bd=1, relief="raised")
-        menu_bar.pack(side="top", fill="x")
+        """3-2. 전체 화면 레이아웃을 구성합니다. DJ 버전과 동일한 PanedWindow 구조입니다."""
+        menu_bar = tk.Frame(self.root, bd=1, relief="raised")   # 상단 메뉴바 프레임 (테두리 있음)
+        menu_bar.pack(side="top", fill="x")   # 창 최상단에 가로로 꽉 채워 배치
 
-        self.btn_menu  = tk.Menubutton(menu_bar, text="메뉴", font=(FONT, 9), relief="flat")
-        self.menu_main = tk.Menu(self.btn_menu, tearoff=0)
-        self.menu_main.add_command(label="인증키 입력",   command=self.show_key_input)
-        self.menu_main.add_command(label="갱신주기 입력", command=self.ask_interval)
-        self.menu_main.add_command(label="기록 시작",    command=self._on_toggle,
-                                   state="disabled")
+        self.btn_menu  = tk.Menubutton(menu_bar, text="메뉴", font=(FONT, 9), relief="flat")   # [메뉴] 드롭다운 버튼
+        self.menu_main = tk.Menu(self.btn_menu, tearoff=0)   # 드롭다운 메뉴 (tearoff=0: 분리 창 비활성화)
+        self.menu_main.add_command(label="인증키 입력",   command=self.show_key_input)   # [인증키 입력] 메뉴 항목 — API 인증키를 입력하는 다이얼로그 열기
+        self.menu_main.add_command(label="갱신주기 입력", command=self.ask_interval)   # [갱신주기 입력] 메뉴 항목
+        self.menu_main.add_command(label="기록 시작",    command=self._on_toggle,   # [기록 시작] 메뉴 항목 (인증키 없으면 비활성화)
+                                   state="disabled")   # 초기에는 비활성화 — 인증키 입력 후 활성화됨
         self.menu_main.add_separator()
         self.menu_main.add_command(label="프로그램 종료", command=self._on_close)
         self.btn_menu.config(menu=self.menu_main)
-        self.btn_menu.pack(side="left", padx=5, pady=2)
+        self.btn_menu.pack(side="left", padx=5, pady=2)   # 왼쪽부터 차례로 배치
 
-        self.btn_srch = tk.Button(menu_bar, text="노선 검색", font=(FONT, 9), relief="flat",
+        self.btn_srch = tk.Button(menu_bar, text="노선 검색", font=(FONT, 9), relief="flat",   # [노선 검색] 버튼 — 노선 검색 다이얼로그를 엽니다
                                   command=self.show_route_search)
-        self.btn_srch.pack(side="left", padx=5, pady=2)
+        self.btn_srch.pack(side="left", padx=5, pady=2)   # 버튼을 메뉴바 왼쪽부터 차례로 배치
 
-        self.btn_api = tk.Button(menu_bar, text="API 현황", font=(FONT, 9), relief="flat",
+        self.btn_api = tk.Button(menu_bar, text="API 현황", font=(FONT, 9), relief="flat",   # [API 현황] 버튼 — API 호출 통계 팝업
                                  command=self.show_api_status)
-        self.btn_api.pack(side="left", padx=5, pady=2)
+        self.btn_api.pack(side="left", padx=5, pady=2)   # 왼쪽부터 차례로 배치
 
-        self.btn_info = tk.Button(menu_bar, text="프로그램 정보", font=(FONT, 9),
-                                  relief="flat", command=self.show_program_info)
-        self.btn_info.pack(side="left", padx=5, pady=2)
+        self.btn_info = tk.Button(menu_bar, text="프로그램 정보", font=(FONT, 9),   # [프로그램 정보] 버튼
+                                  relief="flat", command=self.show_program_info)   # 테두리 없음 (평평한 버튼)
+        self.btn_info.pack(side="left", padx=5, pady=2)   # 왼쪽부터 차례로 배치
 
         right_frame = tk.Frame(menu_bar)
-        right_frame.pack(side="right", fill="y", padx=5)
-        tk.Label(right_frame, text="● 만든이 : 박 국 환 ( ", font=(FONT, 9)).pack(side="left")
+        right_frame.pack(side="right", fill="y", padx=5)   # 오른쪽 끝에 배치
+        tk.Label(right_frame, text="● 만든이 : 박 국 환 ( ", font=(FONT, 9)).pack(side="left")   # 왼쪽부터 차례로 배치
         lbl_email = tk.Label(right_frame, text="ggoyong2@naver.com",
                              font=(FONT, 9), fg="blue", cursor="hand2")
-        lbl_email.pack(side="left")
+        lbl_email.pack(side="left")   # 왼쪽부터 차례로 배치
         lbl_email.bind("<Button-1>", lambda e: webbrowser.open("mailto:ggoyong2@naver.com"))
         tk.Label(right_frame, text=" )   ● 데이터 출처 : 공공데이터포털 Open API ( ",
-                 font=(FONT, 9)).pack(side="left")
+                 font=(FONT, 9)).pack(side="left")   # 왼쪽부터 차례로 배치
         lbl_url = tk.Label(right_frame, text="https://www.data.go.kr",
                            font=(FONT, 9), fg="blue", cursor="hand2")
-        lbl_url.pack(side="left")
+        lbl_url.pack(side="left")   # 왼쪽부터 차례로 배치
         lbl_url.bind("<Button-1>", lambda e: webbrowser.open("https://www.data.go.kr"))
-        tk.Label(right_frame, text=" )", font=(FONT, 9)).pack(side="left")
+        tk.Label(right_frame, text=" )", font=(FONT, 9)).pack(side="left")   # 왼쪽부터 차례로 배치
 
-        outer_pane = tk.PanedWindow(self.root, orient="vertical",
+        outer_pane = tk.PanedWindow(self.root, orient="vertical",   # 세로 분리 PanedWindow — 중단 영역(노선도+기록표)과 로그창을 나눔
                                     sashwidth=5, sashrelief="raised")
-        outer_pane.pack(fill="both", expand=True, padx=6, pady=6)
+        outer_pane.pack(fill="both", expand=True, padx=6, pady=6)   # 창 전체를 채우며 6픽셀 여백
 
-        mid_pane = tk.PanedWindow(outer_pane, orient="horizontal",
+        mid_pane = tk.PanedWindow(outer_pane, orient="horizontal",   # 좌우 분리 PanedWindow — 노선도(좌)와 기록 테이블(우)을 나눔
                                   sashwidth=5, sashrelief="raised")
-        outer_pane.add(mid_pane, stretch="always", minsize=400)
+        outer_pane.add(mid_pane, stretch="always", minsize=400)   # 창 크기 변화 시 늘어남, 최소 400픽셀
 
-        self.route_map_container = tk.Frame(mid_pane, bg=MAP_BG)
-        mid_pane.add(self.route_map_container, stretch="always", minsize=740)
+        self.route_map_container = tk.Frame(mid_pane, bg=MAP_BG)   # 노선도 패널 컨테이너 — 6개 RouteMapPanel이 겹쳐 쌓이는 영역
+        mid_pane.add(self.route_map_container, stretch="always", minsize=740)   # 노선도 영역: 최소 740픽셀
 
-        records_pane = tk.PanedWindow(mid_pane, orient="vertical",
+        records_pane = tk.PanedWindow(mid_pane, orient="vertical",   # 우측 세로 분리 — 출발 기록표(위)와 도착 기록표(아래)
                                       sashwidth=5, sashrelief="raised")
-        mid_pane.add(records_pane, stretch="always", minsize=300)
+        mid_pane.add(records_pane, stretch="always", minsize=300)   # 기록 테이블 영역: 최소 300픽셀
 
         self.trees_hist = []
-        for i, title in enumerate(["운행 출발 시각 기록", "운행 종료 시각 기록"]):
+        for i, title in enumerate(["운행 출발 시각 기록", "운행 종료 시각 기록"]):  # 리스트를 (인덱스, 값) 쌍으로 순회
             frm = tk.LabelFrame(records_pane, text=f"  {title}  ",
                                 font=(FONT, 10, "bold"), padx=3, pady=3)
             records_pane.add(frm, stretch="always", minsize=120)
@@ -865,8 +943,8 @@ class DJBusRecorder:
                 tree.column(col, width=w, anchor=anc, stretch=(col == "상태"))
             sb = ttk.Scrollbar(frm, orient="vertical", command=tree.yview)
             tree.configure(yscrollcommand=sb.set)
-            tree.pack(side="left", fill="both", expand=True)
-            sb.pack(side="right", fill="y")
+            tree.pack(side="left", fill="both", expand=True)   # 왼쪽부터 차례로 배치
+            sb.pack(side="right", fill="y")   # 오른쪽 끝에 배치
             self.trees_hist.append(tree)
 
         log_frm = tk.LabelFrame(outer_pane, text="  로그  ", font=(FONT, 9), padx=4, pady=2)
@@ -875,25 +953,24 @@ class DJBusRecorder:
                                 state="disabled", wrap="word")
         log_sb = ttk.Scrollbar(log_frm, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_sb.set)
-        self.log_text.pack(side="left", fill="both", expand=True)
-        log_sb.pack(side="right", fill="y")
+        self.log_text.pack(side="left", fill="both", expand=True)   # 왼쪽부터 차례로 배치
+        log_sb.pack(side="right", fill="y")   # 오른쪽 끝에 배치
 
         self.root.bind("<Button-1>", self._on_root_click, add="+")
 
-    # ──────────────────────────────────────────
-    # 메뉴 이벤트 핸들러
-    # ──────────────────────────────────────────
-
     def ask_interval(self):
+        """3-3. 갱신주기(초)를 입력받는 커스텀 다이얼로그.
+        최솟값 10초 미만이면 경고를 표시합니다. Enter로 적용, ESC로 취소합니다.
+        """
         dlg = tk.Toplevel(self.root)
         dlg.title("갱신주기 설정")
         dlg.resizable(False, False)
-        dlg.grab_set()
-        dlg.transient(self.root)
+        dlg.grab_set()  # 이 창이 열린 동안 다른 창의 입력 차단 (모달 동작)
+        dlg.transient(self.root)  # 이 창의 부모를 지정 → 부모 최소화 시 함께 숨겨짐
 
         tk.Label(dlg, text="갱신주기(초)를 입력하세요 (10초 이상):",
                  font=(FONT, 9), padx=10, pady=8).pack()
-        var = tk.StringVar(value=str(self.refresh_interval))
+        var = tk.StringVar(value=str(self.refresh_interval))   # 텍스트 입력 위젯과 연동되는 변수
         ent = tk.Entry(dlg, textvariable=var, font=(FONT, 9), width=10, justify="center")
         ent.pack(padx=20, pady=4)
         dlg.after(10, lambda: (ent.icursor(tk.END), ent.selection_clear()))
@@ -902,43 +979,47 @@ class DJBusRecorder:
 
         def _ok(event=None):
             try:
-                v = int(var.get())
+                v = int(var.get())  # 입력창의 문자열을 정수로 변환
             except ValueError:
-                messagebox.showwarning("알림", "숫자를 입력해주세요.", parent=dlg)
+                messagebox.showwarning("알림", "숫자를 입력해주세요.", parent=dlg)  # 경고 대화상자 표시 (제목, 내용)
                 return
             if v < 10:
-                messagebox.showwarning("알림", "갱신주기는 10초 이상이어야 합니다.", parent=dlg)
+                messagebox.showwarning("알림", "갱신주기는 10초 이상이어야 합니다.", parent=dlg)  # 경고 대화상자 표시 (제목, 내용)
                 return
             result[0] = v
-            dlg.destroy()
+            dlg.destroy()  # 창 또는 위젯을 완전히 제거
 
         def _cancel():
-            dlg.destroy()
+            dlg.destroy()  # 창 또는 위젯을 완전히 제거
 
         btn_frame = tk.Frame(dlg)
         btn_frame.pack(pady=8)
-        tk.Button(btn_frame, text="확인",   font=(FONT, 9), width=8, command=_ok).pack(side="left", padx=5)
-        tk.Button(btn_frame, text="취소",   font=(FONT, 9), width=8, command=_cancel).pack(side="left", padx=5)
-        ent.bind("<Return>", _ok)
-        dlg.bind("<Escape>", lambda e: _cancel())
+        tk.Button(btn_frame, text="확인",   font=(FONT, 9), width=8, command=_ok).pack(side="left", padx=5)   # 왼쪽부터 차례로 배치
+        tk.Button(btn_frame, text="취소",   font=(FONT, 9), width=8, command=_cancel).pack(side="left", padx=5)   # 왼쪽부터 차례로 배치
+        ent.bind("<Return>", _ok)   # Enter 키 이벤트 연결
+        dlg.bind("<Escape>", lambda e: _cancel())   # ESC 키 이벤트 연결
 
-        self.root.update_idletasks()
-        px = self.root.winfo_x() + self.root.winfo_width()  // 2 - 150
-        py = self.root.winfo_y() + self.root.winfo_height() // 2 - 70
+        self.root.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2 - 150  # 위젯의 현재 너비(픽셀)
+        py = self.root.winfo_y() + self.root.winfo_height() // 2 - 70  # 위젯의 현재 높이(픽셀)
         dlg.geometry(f"300x140+{px}+{py}")
-        dlg.wait_window()
+        dlg.wait_window()  # 이 창이 닫힐 때까지 현재 실행을 일시 정지
 
         if result[0] is not None:
             self.refresh_interval = result[0]
-            self.log(f"갱신주기가 {result[0]}초로 변경되었습니다.")
+            self.log(f"갱신주기가 {result[0]}초로 변경되었습니다.")  # 로그창에 메시지 출력
 
     def show_api_status(self):
-        if getattr(self, "_api_win", None) is not None:
+        """3-4. [API 현황] 버튼 클릭 시 API 호출 통계 팝업을 표시합니다.
+        이미 열려있으면 최신 데이터로 갱신하고 포커스를 이동합니다.
+        SRCH(노선 검색 API) 호출 횟수도 포함됩니다.
+        """
+        if getattr(self, "_api_win", None) is not None:  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
             try:
-                if self._api_win.winfo_exists():
+                if self._api_win.winfo_exists():  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
                     self._refresh_api_table()
-                    self._api_win.lift()
-                    self._api_win.focus_force()
+                    self._api_win.lift()  # 창을 다른 창 앞으로 가져옴
+                    self._api_win.focus_force()  # 강제로 포커스 이동 (다른 창이 활성화 중이어도)
                     return
             except Exception:
                 pass
@@ -969,47 +1050,51 @@ class DJBusRecorder:
         tree.column("today",     width=75,  minwidth=60,  anchor="center", stretch=False)
         tree.column("yesterday", width=75,  minwidth=60,  anchor="center", stretch=False)
 
-        for label, (stat_key, url) in label_map.items():
-            today     = self.api_stats_today.get(stat_key, 0)
-            yesterday = self.api_stats_yesterday.get(stat_key, 0)
-            tree.insert("", "end", iid=stat_key,
+        for label, (stat_key, url) in label_map.items():  # 딕셔너리를 (키, 값) 튜플 쌍으로 순회
+            today     = self.api_stats_today.get(stat_key, 0)  # 키가 없으면 0 반환
+            yesterday = self.api_stats_yesterday.get(stat_key, 0)  # 키가 없으면 0 반환
+            tree.insert("", "end", iid=stat_key,   # 행의 고유 ID (나중에 선택한 행을 찾을 때 사용)
                         values=(label, url, f"{today:,}회", f"{yesterday:,}회"))
 
         tree.pack(fill="both", expand=True, padx=10, pady=8)
-        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<Escape>", lambda e: win.destroy())  # 창 또는 위젯을 완전히 제거
         self._api_tree      = tree
         self._api_label_map = label_map
 
-        win.update_idletasks()
-        bx = self.btn_api.winfo_rootx()
-        by = self.btn_api.winfo_rooty() + self.btn_api.winfo_height()
+        win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        bx = self.btn_api.winfo_rootx()  # 위젯의 화면 절대 X 좌표
+        by = self.btn_api.winfo_rooty() + self.btn_api.winfo_height()  # 위젯의 화면 절대 Y 좌표
         win.geometry(f"+{bx}+{by}")
 
     def _refresh_api_table(self):
+        """3-5. 이미 열려있는 [API 현황] 팝업의 데이터를 최신값으로 갱신합니다."""
         try:
             tree      = self._api_tree
             label_map = self._api_label_map
-            for _label, (stat_key, _url) in label_map.items():
-                today     = self.api_stats_today.get(stat_key, 0)
-                yesterday = self.api_stats_yesterday.get(stat_key, 0)
-                tree.set(stat_key, "today",     f"{today:,}회")
-                tree.set(stat_key, "yesterday", f"{yesterday:,}회")
+            for _label, (stat_key, _url) in label_map.items():  # 딕셔너리를 (키, 값) 튜플 쌍으로 순회
+                today     = self.api_stats_today.get(stat_key, 0)  # 키가 없으면 0 반환
+                yesterday = self.api_stats_yesterday.get(stat_key, 0)  # 키가 없으면 0 반환
+                tree.set(stat_key, "today",     f"{today:,}회")   # 변수 값 설정
+                tree.set(stat_key, "yesterday", f"{yesterday:,}회")   # 변수 값 설정
         except Exception:
             pass
 
     def show_program_info(self):
-        if self.info_window is not None and self.info_window.winfo_exists():
-            self.info_window.lift(); self.info_window.focus_force(); return
+        """3-6. [프로그램 정보] 버튼 클릭 시 정보 창을 표시합니다.
+        상단: 제작 정보·API 출처 링크 / 하단: CC 이미지·서울 공공데이터 이미지
+        """
+        if self.info_window is not None and self.info_window.winfo_exists():  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+            self.info_window.lift(); self.info_window.focus_force(); return  # 창을 다른 창 앞으로 가져옴
         self.info_window = tk.Toplevel(self.root)
         self.info_window.title("프로그램 정보")
         self.info_window.resizable(False, False)
-        self.info_window.transient(self.root)
+        self.info_window.transient(self.root)  # 이 창의 부모를 지정 → 부모 최소화 시 함께 숨겨짐
 
         outer = tk.Frame(self.info_window)
         outer.pack(padx=20, pady=20)
 
         info_lines = [
-            ("서울시내버스 노선 운행기록 수집 프로그램 v1.09\n\n", None),
+            ("서울시내버스 노선 운행기록 수집 프로그램 v1.13\n\n", None),
             ("이 프로그램은 Python 프로그래밍 언어로 작성하고,\n", None),
             ("공공누리 제1유형으로 개방한 공공데이터 API 서비스를 이용하였으며,\n", None),
             ("API 서비스는 아래의 페이지에서 무료로 이용할 수 있습니다.\n\n", None),
@@ -1039,7 +1124,7 @@ class DJBusRecorder:
 
         _bg = self.info_window.cget("bg")
         txt = tk.Text(outer, font=(FONT, 9), wrap="none", cursor="arrow",
-                      relief="flat", bd=0, padx=0, pady=0,
+                      relief="flat", bd=0, padx=0, pady=0,   # 테두리 없음 (평평한 버튼)
                       bg=_bg, state="normal", width=max_w, height=line_count,
                       selectbackground=_bg, selectforeground=_bg,
                       inactiveselectbackground=_bg,
@@ -1052,9 +1137,9 @@ class DJBusRecorder:
             if url:
                 tag = f"link_{len(_urls)}"
                 _urls[tag] = url
-                txt.insert("end", text_seg, ("link", tag))
+                txt.insert("end", text_seg, ("link", tag))   # 위젯 끝에 내용 추가
             else:
-                txt.insert("end", text_seg)
+                txt.insert("end", text_seg)   # 위젯 끝에 내용 추가
 
         def _on_link_click(event):
             for tag in event.widget.tag_names("current"):
@@ -1071,85 +1156,101 @@ class DJBusRecorder:
 
         txt.bind("<Button-1>",   lambda e: "break")
         txt.bind("<B1-Motion>",  lambda e: "break")
-        txt.bind("<Double-1>",   lambda e: "break")
+        txt.bind("<Double-1>",   lambda e: "break")   # 더블클릭 이벤트 연결
         txt.bind("<Triple-1>",   lambda e: "break")
         txt.tag_bind("link", "<Button-1>", _on_link_click)
 
-        txt.config(state="disabled")
-        txt.pack(side="top", anchor="w")
+        txt.config(state="disabled")   # 초기에는 비활성화 — 인증키 입력 후 활성화됨
+        txt.pack(side="top", anchor="w")   # 위쪽부터 차례로 배치
 
         img_row = tk.Frame(outer, bg=self.info_window.cget("bg"))
-        img_row.pack(side="top", anchor="w", pady=(8, 0))
+        img_row.pack(side="top", anchor="w", pady=(8, 0))   # 위쪽부터 차례로 배치
 
         def _load_img(b64_str):
             raw = base64.b64decode(b64_str)
-            if _PIL_OK:
+            if _PIL_OK:  # PIL이 설치된 경우: 고품질 이미지 처리
                 im = Image.open(io.BytesIO(raw))
                 return ImageTk.PhotoImage(im)
             else:
-                return tk.PhotoImage(data=b64_str)
+                return tk.PhotoImage(data=b64_str)  # PIL 없을 때: tkinter가 직접 PNG Base64 데이터를 처리
 
         try:
             self._img_cc = _load_img(CC_IMG_B64)
             tk.Label(img_row, image=self._img_cc,
-                     bg=self.info_window.cget("bg")).pack(side="left")
+                     bg=self.info_window.cget("bg")).pack(side="left")   # 왼쪽부터 차례로 배치
         except Exception:
             tk.Label(img_row, text="[CC 이미지]",
-                     font=(FONT, 8)).pack(side="left")
+                     font=(FONT, 8)).pack(side="left")   # 왼쪽부터 차례로 배치
 
         tk.Frame(img_row, width=10,
-                 bg=self.info_window.cget("bg")).pack(side="left")
+                 bg=self.info_window.cget("bg")).pack(side="left")   # 왼쪽부터 차례로 배치
 
         try:
             self._img_gg = _load_img(GG_IMG_B64)
             tk.Label(img_row, image=self._img_gg,
-                     bg=self.info_window.cget("bg")).pack(side="left")
+                     bg=self.info_window.cget("bg")).pack(side="left")   # 왼쪽부터 차례로 배치
         except Exception:
             tk.Label(img_row, text="[OPEN 이미지]",
-                     font=(FONT, 8)).pack(side="left")
+                     font=(FONT, 8)).pack(side="left")   # 왼쪽부터 차례로 배치
 
-        self.info_window.update_idletasks()
-        bx = self.btn_info.winfo_rootx()
-        by = self.btn_info.winfo_rooty() + self.btn_info.winfo_height()
+        self.info_window.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        bx = self.btn_info.winfo_rootx()  # 위젯의 화면 절대 X 좌표
+        by = self.btn_info.winfo_rooty() + self.btn_info.winfo_height()  # 위젯의 화면 절대 Y 좌표
         self.info_window.geometry(f"+{bx}+{by}")
-        self.info_window.bind("<Escape>", lambda e: self.info_window.destroy())
-
-    # ──────────────────────────────────────────
-    # 노선 초기화
-    # ──────────────────────────────────────────
+        self.info_window.bind("<Escape>", lambda e: self.info_window.destroy())  # 창 또는 위젯을 완전히 제거
 
     def init_routes(self):
+        """3-7. 프로그램 시작 시 Seoul_Bus_Config.ini에서 즐겨찾기 노선을 복원합니다.
+        노선이 없으면 안내 메시지만 출력합니다.
+        """
         pass
 
     def _init_route_map_panels(self):
-        for route in self.routes:
-            rnm   = route['rnm']
+        """3-8. 노선 초기화 완료 후 메인 스레드에서 RouteMapPanel 인스턴스를 생성합니다.
+        동적으로 노선이 추가될 때마다 호출됩니다.
+        """
+        for route in self.routes:  # 등록된 모든 노선을 순서대로 처리
+            rnm   = route['rnm']  # 현재 처리 중인 노선의 이름
+            # route_map_container 전체를 꽉 채우도록 배치
             panel = RouteMapPanel(self.route_map_container, rnm)
-            panel.place(relx=0, rely=0, relwidth=1, relheight=1)
-            panel.place_forget()
-            self.route_map_panels[rnm] = panel
+            panel.place(relx=0, rely=0, relwidth=1, relheight=1)   # 컨테이너 전체를 꽉 채우도록 배치 (상대 좌표)
+            # 초기에는 모두 숨김 (선택된 노선만 place()로 보여주는 스택 방식)
+            panel.place_forget()  # place()로 배치된 위젯을 화면에서 숨김
+            self.route_map_panels[rnm] = panel   # 노선명 -> 패널 딕셔너리에 등록
+            # 정류소 목록을 로드하여 초기 노선도(버스 없는 상태)를 그립니다.
             panel.load_route(route.get('stations', []),
                              route.get('rtype', '3'),
                              route.get('rlength', ''))
-        self.route_map_select(DEFAULT_MAP_ROUTE)
+        self.route_map_select(DEFAULT_MAP_ROUTE)   # 기본 노선 표시
 
     def route_map_select(self, rnm: str):
+        """3-9. 지정한 노선명의 노선도 패널을 화면에 표시하고 나머지는 숨깁니다."""
         target = None
+        # rnm이 패널 키와 정확히 일치하지 않아도 부분 포함이면 찾습니다.
         for key in self.route_map_panels:
             if rnm in key or key in rnm:
                 target = key
                 break
         if target is None:
-            target = rnm
-        for key, panel in self.route_map_panels.items():
+            target = rnm   # 부분 일치도 없으면 입력값 그대로 사용 (안전장치)
+        for key, panel in self.route_map_panels.items():  # 딕셔너리를 (키, 값) 튜플 쌍으로 순회
             if key == target:
-                panel.place(relx=0, rely=0, relwidth=1, relheight=1)
+                panel.place(relx=0, rely=0, relwidth=1, relheight=1)   # 선택된 패널: 표시
             else:
-                panel.place_forget()
-        self.route_map_current = target
+                panel.place_forget()   # 나머지 패널: 숨김
+        self.route_map_current = target   # 현재 표시 중인 노선명 기록
 
     def fetch_api(self, url, params):
-        _limit_hit = 0
+        """3-10. 서울시 버스 API를 호출하고 XML 응답을 파싱하여 반환합니다.
+        인증키 자동 전환, NODATA 처리, 호출 통계 누적을 담당합니다.
+
+        반환값 체계:
+          · 정상 응답   : XML root 요소 (ET.Element)
+          · NODATA      : ('NO_BUS', 첫차시각 또는 None)
+          · API 실패    : None  ← 운행종료 판정 없이 해당 사이클 스킵
+        """
+        _limit_hit = 0   # "한도 초과" 오류가 발생한 키의 개수
+        # 실제로 사용 가능한(입력된) 인증키의 개수를 미리 셉니다.
         _key_count = sum(1 for k in [self._key_main, self._key_back] if k)
 
         for key in [self._key_main, self._key_back]:
@@ -1157,18 +1258,21 @@ class DJBusRecorder:
                 continue
             try:
                 p = dict(params)
-                p['ServiceKey'] = unquote(key)
-                resp = requests.get(url, params=p, timeout=10)
+                p['ServiceKey'] = unquote(key)  # URL 인코딩(%XX 형식)을 실제 문자로 복원
+                resp = requests.get(url, params=p, timeout=10)   # timeout=10: 10초 안에 응답 없으면 포기
 
+                # 서울시 API가 "일일 호출 한도 초과"를 나타내는 다양한 오류 문자열들입니다.
+                # API 버전마다 오류 메시지 형식이 다르므로 여러 패턴을 모두 검사합니다.
                 _LIMIT_PATS = (
                     "TOO MANY", "LIMITED NUMBER", "LIMITED_NUMBER",
                     "RATE LIMIT", "<headerCd>22</headerCd>",
                 )
-                _raw_up = resp.text.upper()
+                _raw_up = resp.text.upper()  # 대문자로 변환 (대소문자 구분 없이 비교하기 위해)
                 if any(p_ in _raw_up for p_ in _LIMIT_PATS):
-                    _limit_hit += 1
-                    continue
+                    _limit_hit += 1   # 이 키가 한도 초과임을 기록
+                    continue          # 다음 키(백업키)를 시도합니다
 
+                # 인증키가 공공데이터포털에 등록되지 않은 경우의 오류 메시지입니다.
                 if ("SERVICE KEY IS NOT REGISTERED" in resp.text or
                         "UNREGISTERED_KEY" in resp.text):
                     continue
@@ -1176,9 +1280,12 @@ class DJBusRecorder:
                 if resp.status_code != 200:
                     continue
 
-                root      = ET.fromstring(resp.text)
-                header_cd = root.findtext(".//headerCd") or ""
-                err_msg   = root.findtext(".//headerMsg") or ""
+                # XML 응답 문자열을 파이썬 트리 구조로 변환합니다.
+                root      = ET.fromstring(resp.text)  # XML 문자열 → ElementTree 트리 구조로 파싱
+                # headerCd: "0"=정상, "4"=NODATA(버스없음), "22"=한도초과
+                header_cd = root.findtext(".//headerCd") or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                # headerMsg: 사람이 읽을 수 있는 오류 설명 (예: "결과가 없습니다")
+                err_msg   = root.findtext(".//headerMsg") or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
 
                 if   URL_POS1 in url: self.api_stats_today["POS1"] += 1
                 elif URL_POS2 in url: self.api_stats_today["POS2"] += 1
@@ -1186,13 +1293,19 @@ class DJBusRecorder:
                 elif URL_RINF in url: self.api_stats_today["RINF"] += 1
                 else:                 self.api_stats_today["기타"]  += 1
 
+                # headerCd == "0": 완전한 정상 응답 → XML root 요소 반환
                 if header_cd == "0":
                     return root
 
+                # "결과가 없습니다" = API 성공했으나 버스가 없음 (API 실패가 아님)
                 is_nodata = "결과가 없습니다" in err_msg or "NODATA" in err_msg
-                if is_nodata and URL_POS2 in url:
-                    f_tm = self._fetch_first_time(params.get('busRouteId', ''))
-                    return ('NO_BUS', f_tm)
+                if is_nodata:
+                    if URL_POS2 in url:
+                        # POS2 NODATA: 운행종료 판정 시 첫차 시각이 필요하므로 같이 반환
+                        f_tm = self._fetch_first_time(params.get('busRouteId', ''))
+                        return ('NO_BUS', f_tm)   # (신호 문자열, 첫차 시각)
+                    else:
+                        return ('NO_BUS', None)   # POS1 NODATA: 노선 전체에 버스 없음
 
             except Exception:
                 continue
@@ -1201,419 +1314,446 @@ class DJBusRecorder:
             self._handle_key_limit()
         return None
 
-    # =========================================================
-    # 설정 파일 (인증키 암호화 + 즐겨찾기) 저장/불러오기
-    # =========================================================
     _SECRET = "l'existence précède l'essence"
 
-    def _make_fernet(self):
-        if not _CRYPTO_OK:
-            return None
+    def _make_fernet(self):  # 암호화 키 생성 또는 로드
+        """3-11. API 키 암호화에 사용할 Fernet 객체를 생성합니다.
+        cryptography 패키지가 없으면 None을 반환합니다.
+        """
+        if not _CRYPTO_OK:   # cryptography 패키지 없으면
+            return None   # 암호화 기능 비활성화 (API 키를 평문으로 저장)
+        # PBKDF2: 비밀키에서 암호화용 키를 유도하는 함수
+        # sha256: 해시 알고리즘 / self._SECRET: 프로그램 고유 비밀값 (솔트 역할)
+        # iterations=100_000: 반복 횟수 많을수록 브루트포스 공격 어려움 / dklen=32: 32바이트 키
         dk = _hl.pbkdf2_hmac(
             "sha256", self._SECRET.encode("utf-8"),
             b"SeoulBusSalt2025", iterations=100_000, dklen=32
         )
-        return _Fernet(_b64.urlsafe_b64encode(dk))
+        # urlsafe_b64encode: Fernet이 요구하는 URL 안전 Base64 형식으로 인코딩
+        return _Fernet(_b64.urlsafe_b64encode(dk))  # 대칭키 암호화 (cryptography 라이브러리) — API 키 보호
 
-    def _enc_key(self, raw):
-        if not raw or not _CRYPTO_OK:
-            return raw
+    def _enc_key(self, raw):  # API 키 암호화
+        """3-12. API 키 문자열을 Fernet으로 암호화합니다. 실패 시 원문 반환."""
+        if not raw or not _CRYPTO_OK:   # 빈 키이거나 암호화 모듈 없으면
+            return raw   # 원문 그대로 반환
         try:
-            return self._make_fernet().encrypt(raw.encode("utf-8")).decode("ascii")
+            # raw.encode("utf-8"): 문자열을 바이트로 변환
+            # .encrypt(): Fernet 대칭키 암호화
+            # .decode("ascii"): 암호화 결과(바이트)를 ASCII 문자열로 변환 → ini 파일에 저장 가능
+            return self._make_fernet().encrypt(raw.encode("utf-8")).decode("ascii")  # 암호화 키 생성 또는 로드
         except Exception:
             return raw
 
-    def _dec_key(self, enc):
-        if not enc or not _CRYPTO_OK:
-            return enc
+    def _dec_key(self, enc):  # API 키 복호화
+        """3-13. 암호화된 API 키를 복호화합니다. 실패 시 원문 반환."""
+        if not enc or not _CRYPTO_OK:   # 빈 값이거나 암호화 모듈 없으면
+            return enc   # 입력 그대로 반환 (평문 저장된 경우)
         try:
-            return self._make_fernet().decrypt(enc.encode("ascii")).decode("utf-8")
+            # enc.encode("ascii"): ini 파일의 암호문 문자열을 바이트로 변환
+            # .decrypt(): Fernet 복호화 (키가 틀리면 예외 발생 → except에서 원문 반환)
+            # .decode("utf-8"): 복호화된 바이트를 문자열로 변환
+            return self._make_fernet().decrypt(enc.encode("ascii")).decode("utf-8")  # 암호화 키 생성 또는 로드
         except Exception:
             return enc
 
     def _load_config(self):
+        """3-14. Seoul_Bus_Config.ini 파일에서 API 인증키와 즐겨찾기 노선을 읽습니다.
+        파일이 없으면 아무것도 하지 않습니다.
+        """
         import configparser, json, os
-        cfg = configparser.ConfigParser()
-        if not os.path.exists(self._cfg_file):
+        cfg = configparser.ConfigParser()  # INI 형식 설정 파일 읽기/쓰기 라이브러리
+        if not os.path.exists(self._cfg_file):  # 파일 또는 디렉토리가 실제로 존재하는지 확인
             return
         try:
             cfg.read(self._cfg_file, encoding="utf-8")
             enc_m = cfg.get("keys", "main_key", fallback="")
             enc_b = cfg.get("keys", "back_key", fallback="")
             if enc_m:
-                self._key_main = self._dec_key(enc_m)
+                self._key_main = self._dec_key(enc_m)  # API 키 복호화
             if enc_b:
-                self._key_back = self._dec_key(enc_b)
+                self._key_back = self._dec_key(enc_b)  # API 키 복호화
             fav_raw = cfg.get("favorites", "data", fallback="")
             if fav_raw:
-                self._favorites = json.loads(fav_raw)
+                self._favorites = json.loads(fav_raw)   # JSON 문자열 → 파이썬 객체 변환
         except Exception as e:
-            self.log(f"설정 불러오기 실패: {e}")
+            self.log(f"설정 불러오기 실패: {e}")  # 로그창에 메시지 출력
 
     def _save_config(self):
+        """3-15. API 인증키를 Seoul_Bus_Config.ini 파일에 저장합니다.
+        cryptography 설치 시 키를 암호화하여 저장합니다.
+        """
         import configparser, json
-        cfg = configparser.ConfigParser()
+        cfg = configparser.ConfigParser()  # INI 형식 설정 파일 읽기/쓰기 라이브러리
         cfg["keys"] = {
-            "main_key": self._enc_key(self._key_main),
-            "back_key": self._enc_key(self._key_back),
+            "main_key": self._enc_key(self._key_main),  # API 키 암호화
+            "back_key": self._enc_key(self._key_back),  # API 키 암호화
         }
         cfg["favorites"] = {
-            "data": json.dumps(self._favorites, ensure_ascii=False),
+            "data": json.dumps(self._favorites, ensure_ascii=False),   # 파이썬 객체 → JSON 문자열 변환
         }
         try:
             with open(self._cfg_file, "w", encoding="utf-8") as f:
-                cfg.write(f)
+                cfg.write(f)  # 파일에 내용 쓰기
         except Exception as e:
-            self.log(f"설정 저장 실패: {e}")
+            self.log(f"설정 저장 실패: {e}")  # 로그창에 메시지 출력
 
     def _save_favorites(self):
+        """3-16. 현재 추가된 노선 목록을 즐겨찾기로 Seoul_Bus_Config.ini에 저장합니다."""
         self._save_config()
 
     def _handle_key_limit(self):
+        """3-17. 두 인증키 모두 한도를 초과했을 때 로그에 경고를 1회 출력합니다."""
         if self._key_limit_notified:
             return
         self._key_limit_notified = True
-        self.log("⚠ 모든 인증키의 호출 한도가 초과되었습니다. 호출한도는 자정에 초기화됩니다.")
-        self.root.after(0, self._open_key_input_for_limit)
-
-    def _open_key_input_for_limit(self):
-        if getattr(self, "_key_win", None) is not None:
-            try:
-                if self._key_win.winfo_exists():
-                    self._key_win.lift(); self._key_win.focus_force()
-                    return
-            except Exception:
-                pass
-        self.show_key_input()
-        def _reset_flag():
-            self._key_limit_notified = False
-        if getattr(self, "_key_win", None) is not None:
-            try:
-                self._key_win.bind("<Destroy>", lambda e: _reset_flag())
-            except Exception:
-                pass
+        self.log("⚠ 모든 인증키의 호출 한도가 초과되었습니다. 호출한도는 자정에 초기화됩니다.")  # 로그창에 메시지 출력
 
     def _fetch_first_time(self, rid):
+        """3-18. 노선의 첫차 시각(HH:MM)을 RINF API로 조회합니다.
+        운행종료 확정 후 POS 재개 시각 계산에 사용됩니다.
+        조회 실패 시 None을 반환합니다.
+        """
         if not rid:
             return None
         try:
             root = self.fetch_api(URL_RINF, {'busRouteId': rid})
-            if root is None or isinstance(root, tuple):
+            if root is None or isinstance(root, tuple):  # 객체가 특정 클래스의 인스턴스인지 확인
                 return None
-            raw = root.findtext(".//firstBusTm") or ""
+            raw = root.findtext(".//firstBusTm") or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
             if raw:
-                return self.format_hhmm(raw)
+                return self.format_hhmm(raw)  # 14자리 또는 4자리 시각 문자열 → "HH:MM" 형식으로 변환
         except Exception:
             pass
         return None
 
-    # ──────────────────────────────────────────
-    # 모니터링 제어
-    # ──────────────────────────────────────────
-
     def _on_toggle(self):
+        """3-19. [기록 시작/중지] 메뉴 클릭 핸들러.
+        is_monitoring 상태에 따라 start_monitoring() 또는 stop_monitoring()을 호출합니다.
+        """
         if self.is_monitoring:
             self.stop_monitoring()
         else:
             self.start_monitoring()
 
     def start_monitoring(self):
+        """3-20. 자동 기록을 시작합니다.
+        · 추가된 노선이 없으면 경고 후 중단합니다.
+        · 시작 시각 포함 파일명으로 새 엑셀 파일을 생성합니다.
+        · 백그라운드 갱신 루프(main_loop)를 시작합니다.
+        """
         if not self.routes_ready:
-            messagebox.showwarning("알림", "노선 정보 초기화가 완료되지 않았습니다.")
+            messagebox.showwarning("알림", "노선 정보 초기화가 완료되지 않았습니다.")  # 경고 대화상자 표시 (제목, 내용)
             return
 
-        filename = f"Bus_Arrival_Log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        self.auto_save_path = os.path.join(self.current_dir, filename)
+        # 기록 파일명 생성 (한글·날짜시각 형식, 충돌 시 (n) 부가)
+        base_name = f"운행기록_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"  # 현재 날짜+시각을 datetime 객체로 반환
+        self.auto_save_path = self._unique_path(os.path.join(self.current_dir, base_name))  # 운영체제에 맞는 경로 구분자로 경로를 조합
+        filename = os.path.basename(self.auto_save_path)  # 경로에서 파일명만 추출 예) "/foo/bar.txt" → "bar.txt"
         try:
-            pd.DataFrame(columns=["데이터시각", "운행시작/종료", "정류소이름(번호)", "노선", "차량번호"]).to_excel(
+            pd.DataFrame(columns=["데이터시각", "운행시작/종료", "정류소이름(번호)", "노선", "차량번호"]).to_excel(  # 데이터를 표 형식(행·열)으로 변환 — 엑셀 저장 전 처리
                 self.auto_save_path, index=False)
             self.can_auto_save = True
-            self.log(f"자동 저장 파일: {filename}")
+            self.log(f"자동 저장 파일: {filename}")  # 로그창에 메시지 출력
         except Exception as e:
-            messagebox.showwarning("오류", f"엑셀 파일 생성 실패: {e}")
+            messagebox.showwarning("오류", f"엑셀 파일 생성 실패: {e}")  # 경고 대화상자 표시 (제목, 내용)
             return
 
         self.is_monitoring = True
-        for panel in self.route_map_panels.values():
+        for panel in self.route_map_panels.values():  # 딕셔너리의 값(value)들만 순회
             panel.resume_tick()
         self.menu_main.entryconfig(2, label="기록 중지")
-        self.btn_srch.config(state="disabled")
-        threading.Thread(target=self.main_loop, daemon=True).start()
-        self.log(f"▶ 자동 기록을 시작합니다. (주기: {self.refresh_interval}초)")
+        self.btn_srch.config(state="disabled")   # 초기에는 비활성화 — 인증키 입력 후 활성화됨
+        threading.Thread(target=self.main_loop, daemon=True).start()  # 새 스레드 생성 (병렬 실행)
+        self.log(f"▶ 자동 기록을 시작합니다. (주기: {self.refresh_interval}초)")  # 로그창에 메시지 출력
 
     def stop_monitoring(self):
-        if not messagebox.askyesno("중지 확인", "정말 기록을 중지하시겠습니까?"):
+        """3-21. 자동 기록을 중지합니다.
+        중지 확인 다이얼로그 후, 미저장 기록이 있으면 엑셀에 최종 저장합니다.
+        """
+        if not messagebox.askyesno("중지 확인", "정말 기록을 중지하시겠습니까?"):  # [예/아니오] 확인 대화상자 → True(예) 또는 False(아니오) 반환
             return
-        self.is_monitoring = False
+        self.is_monitoring = False   # True=기록 실행 중, False=중지 상태
         self.menu_main.entryconfig(2, label="기록 시작")
-        self.btn_srch.config(state="normal")
-        for panel in self.route_map_panels.values():
+        self.btn_srch.config(state="normal")   # 위젯 활성화 (클릭·입력 가능)
+        for panel in self.route_map_panels.values():  # 딕셔너리의 값(value)들만 순회
             panel.pause_tick()
         if (self.recorded_data and self.auto_save_path and self.can_auto_save
-                and len(self.recorded_data) > self._saved_record_count):
+                and len(self.recorded_data) > self._saved_record_count):  # 미저장 데이터 있으면
             self.perform_auto_save()
-        self.log("■ 자동 기록을 중지합니다.")
+        self.log("■ 자동 기록을 중지합니다.")  # 로그창에 메시지 출력
 
     def main_loop(self):
-        next_call = time.time()
-        while self.is_monitoring:
-            self.refresh_data()
-            next_call += self.refresh_interval
-            sleep_time = next_call - time.time()
+        """3-22. 백그라운드 자동 갱신 루프 (별도 daemon 스레드에서 실행).
+        refresh_interval마다 refresh_data()를 호출합니다.
+        is_monitoring=False이면 0.1초 단위로 즉시 루프를 탈출합니다.
+        """
+        next_call = time.time()  # 현재 유닉스 타임스탬프(초, 실수)
+        while self.is_monitoring:   # is_monitoring=False이면 즉시 루프 탈출
+            self.refresh_data()     # 한 사이클 갱신 실행
+            next_call += self.refresh_interval   # 다음 갱신 예정 시각 계산
+            sleep_time = next_call - time.time()  # 현재 유닉스 타임스탬프(초, 실수)
             if sleep_time < 0:
-                next_call  = time.time()
+                # API 처리가 갱신 주기보다 오래 걸린 경우 → 즉시 다음 사이클 시작
+                next_call  = time.time()  # 현재 유닉스 타임스탬프(초, 실수)
                 sleep_time = 0
-            for _ in range(int(sleep_time * 10)):
+            # 대기 시간을 0.1초 조각으로 쪼개어 sleep합니다.
+            # 이렇게 하면 stop_monitoring() 호출 시 최대 0.1초 안에 루프 탈출 가능합니다.
+            for _ in range(int(sleep_time * 10)):   # 대기를 0.1초 단위로 쪼개어 중지 신호 감지
                 if not self.is_monitoring:
-                    break
-                time.sleep(0.1)
+                    break   # 중지 신호 수신 시 즉시 대기 탈출
+                time.sleep(0.1)  # 0.1초 대기 — 중지 신호 확인 간격
 
     def refresh_data(self):
-        if not self._refresh_lock.acquire(blocking=False):
+        """3-23. 모든 노선 데이터를 한 번 갱신합니다. main_loop()에서 매 사이클 호출됩니다.
+        _refresh_lock으로 중복 실행을 방지합니다.
+        새 기록이 있으면 perform_auto_save()를 호출합니다.
+        """
+        # blocking=False: 이미 다른 스레드가 갱신 중이면 즉시 포기합니다 (중복 실행 방지)
+        if not self._refresh_lock.acquire(blocking=False):  # 비차단 방식으로 잠금 시도 — 이미 잠겨있으면 False 반환
             return
         try:
-            self.process_routes()
+            self.process_routes()   # 출발·도착 판정 실행
+            # 갱신 후 미저장 기록이 있으면 즉시 엑셀에 저장합니다.
             if (self.recorded_data and self.auto_save_path and self.can_auto_save
-                    and len(self.recorded_data) > self._saved_record_count):
+                    and len(self.recorded_data) > self._saved_record_count):  # 미저장 데이터 있으면
                 self.perform_auto_save()
         finally:
-            self._refresh_lock.release()
-
-    # ──────────────────────────────────────────
-    # 핵심 도착/출발 판정 로직
-    # ──────────────────────────────────────────
+            self._refresh_lock.release()   # 성공·실패와 무관하게 반드시 잠금 해제
 
     def process_routes(self):
-        """모든 노선의 출발·도착을 판정합니다. refresh_data()에서 매 사이클 호출됩니다.
+        """3-24. 모든 노선의 출발·도착을 판정합니다. refresh_data()에서 매 사이클 호출됩니다.
 
-        [v1.06 변경] 운행 종료 판정 5분 유예
-          - POS1 응답에 차량이 없으면 즉시 종료하지 않고 pos_empty_since에 시각을 기록합니다.
-          - 5분(POS_EMPTY_GRACE_SEC) 미만인 동안:
-            · 노선도를 빈 버스 목록으로 갱신하여 아이콘을 제거합니다.
-            · POS2 호출을 계속하여 막차 도착기록을 확보합니다.
-          - 5분 이상 지속되면 운행 종료를 확정하고 POS 정지합니다.
-          - POS1에 차량이 다시 나타나면 pos_empty_since에서 해당 노선을 삭제합니다.
+        [출발 판정] POS1 전담
+          · lastStnId == 첫/두번째 정류소 AND lastStTm > 0 → 출발 기록
+          · 출발 판정 성공 시 departed_vehicles[(rid, veh_no)]에 등록
+
+        [도착 판정] POS2 전담 (v1.11/v1.13 변경)
+          · lastStnId == 마지막 정류소 AND departed_vehicles에 해당 차량 존재 → 도착 기록
+          · 도착 후 departed_vehicles에서 항목 삭제
+
+        [운행종료 판정]
+          · POS1 None(API 실패) → 해당 사이클 스킵
+          · POS1 NODATA + 보호구간 밖 → 운행종료 확정
+            (v1.11/v1.13) 운행종료 확정 후에도 해당 사이클 POS2를 1회 실행하여 막차 도착 보장
+
+        [departed_vehicles 만료] 6시간(21600초) 미사용 시 자동 제거
         """
-        _now        = time.time()
-        now_dt      = datetime.now()
-        _cycle_start = _now
+        _now   = time.time()       # 유닉스 타임스탬프 (캐시 만료 계산용)
+        now_dt = datetime.now()    # 현재 날짜+시각 (조건 판단용)
 
-        # ── 날짜 변경 감지 ──
+        # ── 자정 감지: 날짜가 바뀌면 각종 상태를 초기화합니다 ──
         today = now_dt.date()
-        if today != self._last_date:
-            self._last_date = today
-            self.pos_suspend_until.clear()
-            self.pos_empty_since.clear()   # [v1.06] 날짜 변경 시 빈 응답 캐시도 초기화
-            self.api_stats_yesterday = self.api_stats_today.copy()
+        if today != self._last_date:   # 날짜가 바뀌었다
+            self._last_date = today   # 자정 감지용 마지막 확인 날짜
+            # 운행종료 후 POS 정지 타이머를 전부 지워서 새 운행을 감지할 수 있게 합니다.
+            self.pos_suspend_until.clear()  # 딕셔너리·집합의 모든 항목 삭제
+            # 어제의 API 호출 통계를 보존하고, 오늘 통계를 0으로 초기화합니다.
+            self.api_stats_yesterday = self.api_stats_today.copy()  # 딕셔너리·리스트를 얕은 복사 (원본 유지)
             for k in self.api_stats_today:
                 self.api_stats_today[k] = 0
-            self.log("📅 날짜가 바뀌었습니다. 통계를 초기화합니다.")
+            # 인증키 한도 초과 경고 플래그를 리셋합니다 (하루 1번만 경고하기 위함)
+            self._key_limit_notified = False   # 하루 1번만 한도초과 경고하기 위한 플래그
+            self.log("📅 날짜가 바뀌었습니다. 통계를 초기화합니다.")  # 로그창에 메시지 출력
 
-        # ── 완주 검증 캐시 만료 처리 ──
-        expired = [k for k, ts in self.prev_st_passed.items() if _now - ts >= 300]
-        for k in expired:
-            del self.prev_st_passed[k]
+        # ── departed_vehicles 만료 처리 ──
+        # 키: (노선ID, 차량번호), 값: 마지막으로 확인한 시각
+        # 6시간(21600초) 동안 갱신 없으면 삭제 → 운행 취소·결함 차량 자동 정리
+        expired_dv = [k for k, ts in self.departed_vehicles.items() if _now - ts >= 21600]  # 딕셔너리를 (키, 값) 튜플 쌍으로 순회
+        for k in expired_dv:  # 만료된 키를 하나씩 삭제
+            del self.departed_vehicles[k]   # 만료된 항목 삭제
 
-        # ── 사이클 공유 캐시 초기화 ──
-        self.temp_pos1_data = {}
-        self.temp_pos2_data = {}
+        # ── 사이클 임시 캐시 초기화 ──
+        # 같은 rid(노선 내부 ID)로 중복 API 호출을 방지하기 위해
+        # 한 사이클 안에서 첫 번째 응답 결과를 임시 저장합니다.
+        self.temp_pos1_data = {}   # {rid: XML root} — POS1 응답 임시 저장
+        self.temp_pos2_data = {}   # {rid: XML root} — POS2 응답 임시 저장
 
-        for route in self.routes:
-            rnm     = route['rnm']
-            rid     = route['rid']
-            st_cnt  = route['st_cnt']
+        for route in self.routes:  # 등록된 모든 노선을 순서대로 처리
+            rnm     = route['rnm']  # 현재 처리 중인 노선의 이름
+            rid     = route['rid']  # 현재 노선의 busRouteId
+            st_cnt  = route['st_cnt']  # 이 노선의 전체 정류소 수
             corp_nm = route['corp_nm']
 
             # ── POS 일시정지 확인 ──
+            # 운행종료 확정 후 다음 첫차 5분 전까지 불필요한 API 호출을 하지 않습니다.
             if rid in self.pos_suspend_until:
-                if now_dt < self.pos_suspend_until[rid]:
-                    continue
-                else:
+                if now_dt < self.pos_suspend_until[rid]:   # 아직 재개 시각이 안됨
+                    continue   # 이번 사이클에서 이 노선 전체 건너뜀
+                else:   # 재개 시각 도달 → 정지 해제
                     del self.pos_suspend_until[rid]
-                    self.pos_resume_logged.discard(rid)
+                    self.pos_resume_logged.discard(rid)  # 집합에서 해당 값 제거 (없어도 오류 안 남)
 
-            # ════════════════════════════════════════════════════════
-            # STEP 1 : POS1 호출 (getBusPosByRtid) → 출발 판정 전담
-            # ════════════════════════════════════════════════════════
             if rid in self.temp_pos1_data:
                 root_pos1 = self.temp_pos1_data[rid]
             else:
                 root_pos1 = self.fetch_api(URL_POS1, {'busRouteId': rid})
-                if root_pos1 is not None and not isinstance(root_pos1, tuple):
+                if root_pos1 is not None and not isinstance(root_pos1, tuple):  # 객체가 특정 클래스의 인스턴스인지 확인
                     self.temp_pos1_data[rid] = root_pos1
 
-            # ── [v1.06] POS1 빈 응답 판정 로직 (5분 유예) ──
-            pos1_has_buses = (root_pos1 is not None
-                              and not isinstance(root_pos1, tuple)
-                              and len(root_pos1.findall(".//itemList")) > 0)
+            if root_pos1 is None:
+                continue
 
-            if pos1_has_buses:
-                # 차량이 있음 → 빈 응답 캐시 해제 (정상 운행 상태)
-                if rid in self.pos_empty_since:
-                    elapsed = _now - self.pos_empty_since[rid]
-                    self.log(f"🔄 {rnm} POS1 차량 재감지 (빈 응답 {elapsed:.0f}초 후 복귀)")
-                    del self.pos_empty_since[rid]
+            if isinstance(root_pos1, tuple) and root_pos1[0] == 'NO_BUS':  # 객체가 특정 클래스의 인스턴스인지 확인
+                pos1_has_buses = False
             else:
-                # 차량이 없음 → 빈 응답 유예 판정
-                in_service = False
-                f_tm = route.get('first_bus_tm')
-                l_tm = route.get('last_bus_tm')
-                if f_tm and l_tm:
+                pos1_has_buses = len(root_pos1.findall(".//itemList")) > 0  # XML 트리에서 지정 경로와 일치하는 모든 요소를 리스트로 반환
+
+            if not pos1_has_buses:
+                in_service = False   # 기본값: 운행 중이 아닌 것으로 시작
+                f_tm = route.get('first_bus_tm')   # 첫차 시각 예) "04:30"
+                l_tm = route.get('last_bus_tm')    # 막차 시각 예) "23:10"
+                if f_tm and l_tm:   # 두 시각이 모두 있어야 보호구간 계산 가능
                     try:
-                        fh, fm = map(int, f_tm.split(":"))
-                        lh, lm = map(int, l_tm.split(":"))
+                        fh, fm = map(int, f_tm.split(":"))   # 첫차 시·분으로 분리
+                        lh, lm = map(int, l_tm.split(":"))   # 막차 시·분으로 분리
                         protect_start = now_dt.replace(hour=fh, minute=fm,
                                                        second=0, microsecond=0) \
-                                        - timedelta(minutes=5)
+                                        - timedelta(minutes=5)  # 5분 추가/감소
                         protect_end   = now_dt.replace(hour=lh, minute=lm,
                                                        second=0, microsecond=0) \
-                                        + timedelta(minutes=20)
+                                        + timedelta(minutes=30)  # 30분 추가/감소
                         if protect_end < protect_start:
-                            protect_end += timedelta(days=1)
+                            protect_end += timedelta(days=1)  # 1일(24시간) 추가
                         in_service = protect_start <= now_dt <= protect_end
                     except Exception:
                         pass
 
                 if in_service:
-                    # 보호구간 내 → 운행 종료 판정하지 않고 POS2 계속 호출
-                    # 노선도는 빈 버스 목록으로 갱신 (아이콘 제거)
                     if rnm in self.route_map_panels:
                         panel = self.route_map_panels[rnm]
-                        self.root.after(0, lambda p=panel: p.update_buses([]))
+                        self.root.after(0, lambda p=panel: p.update_buses([]))  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
                 else:
-                    # 보호구간 밖 → 5분 유예 판정 시작
-                    if rid not in self.pos_empty_since:
-                        # 최초 빈 응답 감지 → 시각 기록, 로그 출력
-                        self.pos_empty_since[rid] = _now
-                        self.log(f"⏳ {rnm} POS1 차량 없음 감지 → 5분간 유예 호출 시작")
-
-                    elapsed_empty = _now - self.pos_empty_since[rid]
-
-                    if elapsed_empty < POS_EMPTY_GRACE_SEC:
-                        # 5분 미만 → POS2 계속 호출, 노선도 빈 목록 갱신
-                        if rnm in self.route_map_panels:
-                            panel = self.route_map_panels[rnm]
-                            self.root.after(0, lambda p=panel: p.update_buses([]))
-                        # 출발 판정은 건너뛰고, 아래 POS2 도착 판정으로 진행
-                        # (pos1_has_buses == False이므로 출발 판정 루프는 자연 스킵)
+                    if rnm in self.route_map_panels:
+                        panel = self.route_map_panels[rnm]
+                        self.root.after(0, lambda p=panel: p.update_buses([]))  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
+                    f_tm_suspend = f_tm or self._fetch_first_time(rid)  # 첫차 시각 확보: routes에서 가져오거나 없으면 API 재조회
+                    if f_tm_suspend:
+                        try:
+                            f_hm   = datetime.strptime(f_tm_suspend, "%H:%M")  # 문자열 → datetime 객체 변환 (형식 지정 필수)
+                            base   = now_dt.replace(hour=f_hm.hour, minute=f_hm.minute,
+                                                    second=0, microsecond=0)
+                            if base <= now_dt:
+                                base += timedelta(days=1)  # 1일(24시간) 추가
+                            resume = base - timedelta(minutes=5)  # 5분 추가/감소
+                            self.pos_suspend_until[rid] = (
+                                resume if resume > now_dt
+                                else now_dt + timedelta(minutes=1))  # 1분 후를 안전장치로 설정
+                            if resume > now_dt:
+                                self.log(f"💤 {rnm} 운행 종료 → 첫차 {f_tm_suspend} 5분 전까지 POS 정지")  # 로그창에 메시지 출력
+                        except Exception:
+                            self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)  # 30분 추가/감소
                     else:
-                        # 5분 이상 → 운행 종료 확정, POS 정지
-                        del self.pos_empty_since[rid]
-                        # 노선도 빈 목록 최종 갱신
-                        if rnm in self.route_map_panels:
-                            panel = self.route_map_panels[rnm]
-                            self.root.after(0, lambda p=panel: p.update_buses([]))
+                        self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)  # 30분 추가/감소
+                        self.log(f"💤 {rnm} 운행 종료 → 30분 후까지 POS 정지")  # 로그창에 메시지 출력
 
-                        f_tm_suspend = f_tm
-                        if not f_tm_suspend:
-                            f_tm_suspend = self._fetch_first_time(rid)
-                        if f_tm_suspend:
-                            try:
-                                f_hm   = datetime.strptime(f_tm_suspend, "%H:%M")
-                                base   = now_dt.replace(hour=f_hm.hour, minute=f_hm.minute,
-                                                        second=0, microsecond=0)
-                                if base <= now_dt:
-                                    base += timedelta(days=1)
-                                resume = base - timedelta(minutes=5)
-                                self.pos_suspend_until[rid] = (
-                                    resume if resume > now_dt
-                                    else now_dt + timedelta(minutes=1))
-                                if resume > now_dt:
-                                    self.log(f"💤 {rnm} 운행 종료 확정(5분간 차량 없음) → 첫차 {f_tm_suspend} 5분 전까지 POS 정지")
-                            except Exception:
-                                self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)
-                        else:
-                            self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)
-                            self.log(f"💤 {rnm} 운행 종료 확정(5분간 차량 없음) → 30분 후까지 POS 정지")
-                        continue   # POS2 호출 없이 다음 노선으로
-
-            # ── 출발 판정 루프 (POS1에 차량이 있을 때만 실행) ──
+            # ── [v1.13] 출발 판정 루프 + 노선도 갱신 ──
             if pos1_has_buses:
-                for bus in root_pos1.findall(".//itemList"):
-                    last_stn       = bus.findtext("lastStnId") or ""
-                    veh_no         = bus.findtext("plainNo")   or ""
-                    last_st_tm_raw = bus.findtext("lastStTm")  or "0"
-
-                    is_first_st  = (route['first_st_id']  and last_stn == route['first_st_id'])
-                    is_second_st = (route['second_st_id'] and last_stn == route['second_st_id'])
-                    if not (is_first_st or is_second_st):
-                        continue
+                for bus in root_pos1.findall(".//itemList"):  # XML 트리에서 지정 경로와 일치하는 모든 요소를 리스트로 반환
+                    last_stn       = bus.findtext("lastStnId") or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                    veh_no         = bus.findtext("plainNo")   or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                    last_st_tm_raw = bus.findtext("lastStTm")  or "0"  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
 
                     try:
                         last_st_tm = int(last_st_tm_raw)
                     except ValueError:
                         last_st_tm = 0
 
+                    # lastStTm == 0 → 이동 이력 없는 노이즈 데이터, 필터링
                     if last_st_tm <= 0:
                         continue
 
-                    key0 = (0, rid, veh_no)
+                    # ── STEP 1-A: 모든 운행 차량을 도착 대기 캐시에 등록 (v1.13 신규) ──
+                    # lastStTm > 0 이면 실제 노선을 주행 중인 차량으로 간주합니다.
+                    # · 프로그램 시작 전 이미 출발한 차량도 여기서 등록됩니다.
+                    # · 이미 캐시된 차량의 타임스탬프는 덮어쓰지 않습니다.
+                    #   (6시간 만료 타이머를 매 사이클 반복 스캔으로 리셋하지 않기 위함)
+                    if (rid, veh_no) not in self.departed_vehicles:
+                        self.departed_vehicles[(rid, veh_no)] = _now
+
+                    # ── STEP 1-B: 출발 기록 (첫/두번째 정류소 감지 시에만) ──
+                    # 출발 정류소가 아닌 차량은 STEP 1-A에서 도착 캐시만 등록하고 건너뜁니다.
+                    is_first_st  = (route['first_st_id']  and last_stn == route['first_st_id'])
+                    is_second_st = (route['second_st_id'] and last_stn == route['second_st_id'])
+                    if not (is_first_st or is_second_st):
+                        continue
+
+                    key0 = (0, rid, veh_no)   # 중복 기록 방지 캐시 키 (구분코드, 노선ID, 차량번호)
                     if (key0 not in self.last_arrival_logs or
-                            _now - self.last_arrival_logs[key0] >= 2400):
-                        f_time = self.format_datetm(bus.findtext("dataTm"))
+                            _now - self.last_arrival_logs[key0] >= 2400):   # 마지막 기록으로부터 경과 시간(초)
+                        f_time = self.format_datetm(bus.findtext("dataTm"))  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
                         if is_first_st:
                             dep_nm  = route['first_nm']
                             dep_ars = route['first_ars']
-                            status  = f"[{dep_nm}({dep_ars}) 출발]"
+                            status  = f"[{dep_nm}({dep_ars}) 출발]"   # 로그·테이블에 표시할 상태 문자열
                         else:
                             dep_nm  = route['second_nm']
                             dep_ars = route['second_ars']
                             status  = (f"[{dep_nm}({dep_ars}) 출발"
                                        f" - 2번째 정류소 감지]")
-                        self._record(0, f_time, rnm, veh_no, dep_nm, dep_ars, status)
-                        self.last_arrival_logs[key0] = _now
+                        self._record(0, f_time, rnm, veh_no, dep_nm, dep_ars, status)   # 출발 기록 저장 (idx=0)
+                        self.last_arrival_logs[key0] = _now   # 현재 시각을 중복 방지 캐시에 저장
+                        # 출발이 확인된 차량은 타임스탬프를 현재 시각으로 갱신합니다.
+                        # (mid-run으로 먼저 등록된 경우에도 6시간 타이머를 리셋합니다)
+                        self.departed_vehicles[(rid, veh_no)] = _now
 
-                # ── 노선도 패널 버스 위치 갱신 (차량이 있을 때) ──
                 if rnm in self.route_map_panels:
                     buses_for_map = []
-                    for item in root_pos1.findall(".//itemList"):
+                    for item in root_pos1.findall(".//itemList"):  # XML 트리에서 지정 경로와 일치하는 모든 요소를 리스트로 반환
                         buses_for_map.append({
-                            "vehId":      item.findtext("vehId")      or "",
-                            "plainNo":    item.findtext("plainNo")    or "",
-                            "busType":    item.findtext("busType")    or "",
-                            "lastStnId":  item.findtext("lastStnId")  or "",
-                            "sectDist":   item.findtext("sectDist")   or "0",
-                            "islastyn":   item.findtext("islastyn")   or "",
-                            "lastStTm":   item.findtext("lastStTm")   or "0",
-                            "congestion": item.findtext("congetion") or item.findtext("congestion") or "0",
+                            "vehId":      item.findtext("vehId")      or "",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "plainNo":    item.findtext("plainNo")    or "",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "busType":    item.findtext("busType")    or "",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "lastStnId":  item.findtext("lastStnId")  or "",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "sectDist":   item.findtext("sectDist")   or "0",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "islastyn":   item.findtext("islastyn")   or "",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "lastStTm":   item.findtext("lastStTm")   or "0",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                            "congestion": item.findtext("congetion") or item.findtext("congestion") or "0",  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
                         })
                     panel = self.route_map_panels[rnm]
-                    self.root.after(0, lambda p=panel, b=buses_for_map: p.update_buses(b))
+                    self.root.after(0, lambda p=panel, b=buses_for_map: p.update_buses(b))  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
 
-            # ════════════════════════════════════════════════════════
-            # STEP 2 : POS2 호출 (getBusPosByRouteSt) → 도착 판정 전담
-            # ════════════════════════════════════════════════════════
             if rid in self.temp_pos2_data:
                 root_pos2 = self.temp_pos2_data[rid]
             else:
                 result2 = self.fetch_api(URL_POS2,
                     {'busRouteId': rid, 'startOrd': '1', 'endOrd': str(st_cnt)})
 
-                if isinstance(result2, tuple) and result2[0] == 'NO_BUS':
-                    # POS2 NODATA → 5분 유예 로직과 동일하게 처리
-                    # 이미 pos_empty_since에 기록 중이라면 유예 중이므로 정상 진행
-                    # pos_empty_since에 없고 보호구간 밖이면 여기서도 유예 시작
-                    if rid not in self.pos_empty_since:
-                        # POS1은 있었지만 POS2만 NODATA인 경우는 드물지만,
-                        # 안전하게 기존 로직대로 첫차까지 정지
-                        f_tm = result2[1]
-                        if f_tm:
+                if isinstance(result2, tuple) and result2[0] == 'NO_BUS':  # 객체가 특정 클래스의 인스턴스인지 확인
+                    _f_tm2 = route.get('first_bus_tm')
+                    _l_tm2 = route.get('last_bus_tm')
+                    _in_svc2 = False
+                    if _f_tm2 and _l_tm2:
+                        try:
+                            _fh2, _fm2 = map(int, _f_tm2.split(":"))  # "HH:MM" 형식 문자열을 ["HH", "MM"] 리스트로 분리
+                            _lh2, _lm2 = map(int, _l_tm2.split(":"))  # "HH:MM" 형식 문자열을 ["HH", "MM"] 리스트로 분리
+                            _ps2 = (now_dt.replace(hour=_fh2, minute=_fm2, second=0, microsecond=0)
+                                    - timedelta(minutes=5))  # 5분 추가/감소
+                            _pe2 = (now_dt.replace(hour=_lh2, minute=_lm2, second=0, microsecond=0)
+                                    + timedelta(minutes=30))  # 30분 추가/감소
+                            if _pe2 < _ps2:
+                                _pe2 += timedelta(days=1)  # 1일(24시간) 추가
+                            _in_svc2 = _ps2 <= now_dt <= _pe2
+                        except Exception:
+                            pass
+                    if not _in_svc2:
+                        f_tm2 = result2[1] or _f_tm2 or self._fetch_first_time(rid)
+                        if f_tm2:
                             try:
-                                f_hm   = datetime.strptime(f_tm, "%H:%M")
-                                base   = now_dt.replace(hour=f_hm.hour, minute=f_hm.minute,
+                                f_hm2  = datetime.strptime(f_tm2, "%H:%M")  # 문자열 → datetime 객체 변환 (형식 지정 필수)
+                                base2  = now_dt.replace(hour=f_hm2.hour, minute=f_hm2.minute,
                                                         second=0, microsecond=0)
-                                if base <= now_dt:
-                                    base += timedelta(days=1)
-                                resume = base - timedelta(minutes=5)
+                                if base2 <= now_dt:
+                                    base2 += timedelta(days=1)  # 1일(24시간) 추가
+                                resume2 = base2 - timedelta(minutes=5)  # 5분 추가/감소
                                 self.pos_suspend_until[rid] = (
-                                    resume if resume > now_dt
-                                    else now_dt + timedelta(minutes=1))
-                                if resume > now_dt:
-                                    self.log(f"💤 {rnm} 운행 종료(POS2 NODATA) → 첫차 {f_tm} 5분 전까지 POS 정지")
+                                    resume2 if resume2 > now_dt
+                                    else now_dt + timedelta(minutes=1))  # 1분 후를 안전장치로 설정
+                                if resume2 > now_dt:
+                                    self.log(f"💤 {rnm} 운행 종료(POS2 NODATA) → 첫차 {f_tm2} 5분 전까지 POS 정지")  # 로그창에 메시지 출력
                             except Exception:
-                                self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)
+                                self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)  # 30분 추가/감소
                         else:
-                            self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)
+                            self.pos_suspend_until[rid] = now_dt + timedelta(minutes=30)  # 30분 추가/감소
                     continue
 
                 root_pos2 = result2
@@ -1623,207 +1763,263 @@ class DJBusRecorder:
             if root_pos2 is None:
                 continue
 
-            # ── 완주 검증 캐시 갱신 ──
-            for bus in root_pos2.findall(".//itemList"):
-                last_stn = bus.findtext("lastStnId") or ""
-                veh_no   = bus.findtext("plainNo")   or ""
-                if route['prev_st_id'] and last_stn == route['prev_st_id']:
-                    self.prev_st_passed[(rid, veh_no)] = _now
-
-            # ── 도착 판정 루프 ──
-            for bus in root_pos2.findall(".//itemList"):
-                last_stn = bus.findtext("lastStnId") or ""
-                veh_no   = bus.findtext("plainNo")   or ""
+            for bus in root_pos2.findall(".//itemList"):  # XML 트리에서 지정 경로와 일치하는 모든 요소를 리스트로 반환
+                last_stn = bus.findtext("lastStnId") or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                veh_no   = bus.findtext("plainNo")   or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
 
                 if not (route['last_st_id'] and last_stn == route['last_st_id']):
                     continue
 
-                if not route['prev_st_id']:
-                    continue
-                passed_ts = self.prev_st_passed.get((rid, veh_no))
-                if passed_ts is None or passed_ts >= _cycle_start:
+                if (rid, veh_no) not in self.departed_vehicles:
                     continue
 
-                key1 = (1, rid, veh_no)
+                key1 = (1, rid, veh_no)   # 중복 기록 방지 캐시 키 (구분코드, 노선ID, 차량번호)
                 if (key1 not in self.last_arrival_logs or
-                        _now - self.last_arrival_logs[key1] >= 2400):
-                    f_time = self.format_datetm(bus.findtext("dataTm"))
-                    status = f"[{route['last_nm']}({route['last_ars']}) 도착]"
-                    self._record(1, f_time, rnm, veh_no,
+                        _now - self.last_arrival_logs[key1] >= 2400):   # 마지막 기록으로부터 경과 시간(초)
+                    f_time = self.format_datetm(bus.findtext("dataTm"))  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+                    status = f"[{route['last_nm']}({route['last_ars']}) 도착]"   # 로그·테이블에 표시할 상태 문자열
+                    self._record(1, f_time, rnm, veh_no,   # 도착 기록 저장 (idx=1)
                                  route['last_nm'], route['last_ars'], status)
-                    self.last_arrival_logs[key1] = _now
+                    self.last_arrival_logs[key1] = _now   # 현재 시각을 중복 방지 캐시에 저장
+                    del self.departed_vehicles[(rid, veh_no)]   # 도착 완료 → 캐시에서 삭제 (다음 출발 감지를 위해)
 
     def _record(self, idx, f_time, rnm, veh_no, st_nm, st_ars, status):
-        op_type    = "운행시작" if idx == 0 else "운행종료"
-        st_display = f"{st_nm} ({st_ars})"
+        """3-27. 출발(idx=0) 또는 도착(idx=1) 기록을 저장하고 화면을 업데이트합니다.
+        recorded_data에 튜플 추가 → 로그 출력 → 테이블 행 삽입 (after(0)으로 메인 스레드 위임)
+        """
+        op_type    = "운행시작" if idx == 0 else "운행종료"   # 엑셀 "운행시작/종료" 열 값
+        st_display = f"{st_nm} ({st_ars})"   # 예: "신촌(01234)"
+        # 튜플 형태로 recorded_data에 추가합니다.
+        # 순서: (데이터시각, 운행시작/종료, 정류소이름(번호), 노선, 차량번호)
+        # — 엑셀 컬럼 A~E 순서와 일치합니다.
         self.recorded_data.append((f_time, op_type, st_display, rnm, veh_no))
-        self.perform_auto_save()
-        log_entry = (f_time, rnm, veh_no, status)
-        self.log(f"★ {rnm} {veh_no} → {status}")
-        self.root.after(0, lambda r=log_entry, t=self.trees_hist[idx]: (
-            t.insert("", "end", values=r),
-            t.see(t.get_children()[-1])
+        self.perform_auto_save()   # 새 기록이 추가될 때마다 즉시 엑셀 저장 시도
+        log_entry = (f_time, rnm, veh_no, status)   # 화면 테이블에 표시할 행 데이터 튜플
+        self.log(f"★ {rnm} {veh_no} → {status}")  # 로그창에 메시지 출력
+        self.root.after(0, lambda r=log_entry, t=self.trees_hist[idx]: (  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
+            t.insert("", "end", values=r),   # 테이블 맨 끝에 새 행 추가
+            t.see(t.get_children()[-1])   # 방금 추가한 마지막 행이 보이도록 자동 스크롤
         ))
 
-    # ──────────────────────────────────────────
-    # 엑셀 저장
-    # ──────────────────────────────────────────
-
     def perform_auto_save(self):
+        """3-28. 기록 추가 시마다 호출되는 엑셀 자동 저장 진입점.
+        _save_lock non-blocking 획득으로 동시 쓰기를 방지합니다.
+        """
+        # 세 가지 전제 조건 확인 (하나라도 불충족이면 저장 건너뜀)
+        # 1) recorded_data: 저장할 데이터가 있어야 함
+        # 2) auto_save_path: 저장 파일 경로가 설정되어 있어야 함
+        # 3) can_auto_save: 파일 생성에 성공하여 쓰기 가능 상태여야 함
         if not self.recorded_data or not self.auto_save_path or not self.can_auto_save:
             return
-        if not self._save_lock.acquire(blocking=False):
+        # blocking=False: 이미 저장 중이면 이번 호출을 건너뜁니다.
+        # 다음 기록 추가 시 재시도하므로 데이터 누락은 없습니다.
+        if not self._save_lock.acquire(blocking=False):  # 비차단 방식으로 잠금 시도 — 이미 잠겨있으면 False 반환
             return
         try:
+            # save_completed=True: 완결 영업일이 있으면 _완료.xlsx 도 함께 생성합니다.
             self._core_excel_save_logic(self.auto_save_path, save_completed=True)
         finally:
-            self._save_lock.release()
+            self._save_lock.release()   # 성공·실패와 무관하게 반드시 잠금 해제
+
+    def _unique_path(self, path):
+        """동일 파일명이 이미 존재할 때 (n)을 붙여 충돌을 피한 경로를 반환합니다.
+        예) 운행기록_20250301_완료.xlsx 가 존재하면
+            운행기록_20250301_완료(1).xlsx 를 반환합니다.
+        """
+        if not os.path.exists(path):  # 파일 또는 디렉토리가 실제로 존재하는지 확인
+            return path   # 파일이 없으면 그대로 반환 (가장 흔한 경우)
+        # 파일 이미 존재: 확장자를 분리하여 (n)을 붙입니다.
+        # 예) base="운행기록_20250301_완료", ext=".xlsx"
+        base, ext = os.path.splitext(path)  # 파일명을 (이름, 확장자)로 분리 예) "a.xlsx" → ("a", ".xlsx")
+        n = 1
+        # (1), (2), (3)... 순서로 충돌하지 않는 번호를 찾습니다.
+        while os.path.exists(f"{base}({n}){ext}"):  # 파일 또는 디렉토리가 실제로 존재하는지 확인
+            n += 1
+        return f"{base}({n}){ext}"   # 예) "운행기록_20250301_완료(1).xlsx"
 
     def _core_excel_save_logic(self, target_path, save_completed=False):
+        """3-29. 엑셀 저장 핵심 로직. DJ 버전과 동일합니다.
+        새벽 03:00 이전 데이터는 전날 영업일로 처리합니다.
+        메인 파일(영업일별 시트)과 완결 파일(운행기록_YYYYMMDD_완료.xlsx)을 생성합니다.
+        완결 파일 저장 후 해당 영업일 데이터를 recorded_data에서 제거합니다 (메모리 관리).
+        """
         try:
             cols = ["데이터시각", "운행시작/종료", "정류소이름(번호)", "노선", "차량번호"]
-            df   = pd.DataFrame(self.recorded_data, columns=cols)
+            df   = pd.DataFrame(self.recorded_data, columns=cols)  # 데이터를 표 형식(행·열)으로 변환 — 엑셀 저장 전 처리
 
             def get_biz_date(dt_str):
                 try:
-                    dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+                    dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")  # 문자열 → datetime 객체 변환 (형식 지정 필수)
                     if dt.hour < 3:
-                        dt -= timedelta(days=1)
+                        dt -= timedelta(days=1)  # 1일(24시간) 추가
                     return dt.strftime("%Y-%m-%d")
                 except Exception:
                     return "Unknown"
 
             df['BizDate'] = df['데이터시각'].apply(get_biz_date)
 
-            now = datetime.now()
-            current_biz = ((now - timedelta(days=1)).strftime("%Y-%m-%d")
+            now = datetime.now()  # 현재 날짜+시각을 datetime 객체로 반환
+            # 현재 영업일 계산: 새벽 03:00 이전이면 전날 영업 시간으로 간주
+            # 예) 03/02 02:30 → 영업일 03/01 / 03/02 09:00 → 영업일 03/02
+            current_biz = ((now - timedelta(days=1)).strftime("%Y-%m-%d")  # 1일(24시간) 추가
                            if now.hour < 3 else now.strftime("%Y-%m-%d"))
+            # 완결된 영업일 = 데이터 내 모든 날짜 - 오늘 영업일 - "Unknown"
             completed_dates = set(df['BizDate'].unique()) - {current_biz, "Unknown"}
 
-            with pd.ExcelWriter(target_path, engine='openpyxl') as writer:
-                for biz_date, group in df.groupby('BizDate'):
-                    sheet_data = group.drop(columns=['BizDate'])
-                    sheet_data.to_excel(writer, sheet_name=biz_date, index=False)
+            # ── 메인 파일 저장: 영업일별 시트 분리 ──
+            # "with" 블록이 끝날 때 파일이 자동 저장·닫힙니다.
+            with pd.ExcelWriter(target_path, engine='openpyxl') as writer:  # 엑셀 파일에 여러 시트를 쓸 수 있는 컨텍스트 매니저
+                # groupby("BizDate"): 영업일별로 데이터를 묶습니다.
+                for biz_date, group in df.groupby('BizDate'):  # 지정 열 값이 같은 행끼리 묶음 (영업일별 시트 분리에 사용)
+                    sheet_data = group.drop(columns=['BizDate'])   # BizDate 열은 저장 불필요
+                    # index=False: 행 번호를 엑셀에 저장하지 않습니다.
+                    sheet_data.to_excel(writer, sheet_name=biz_date, index=False)  # DataFrame을 엑셀 시트로 저장
                     self._apply_excel_style(writer.sheets[biz_date], sheet_data)
 
+            removed_dates = set()   # 이번에 완결 파일로 저장한 영업일 목록
             if save_completed:
-                for biz_date in sorted(completed_dates - self._completed_dates_saved):
-                    day_df = df[df['BizDate'] == biz_date].drop(columns=['BizDate'])
-                    if day_df.empty:
+                # 아직 저장하지 않은 완결 영업일만 처리합니다.
+                for biz_date in sorted(completed_dates - self._completed_dates_saved):  # 리스트를 오름차순으로 정렬
+                    day_df = df[df['BizDate'] == biz_date].drop(columns=['BizDate'])  # 지정한 열을 DataFrame에서 제거
+                    if day_df.empty:   # 데이터가 없으면 건너뜁니다 (안전장치)
                         continue
                     safe_date = biz_date.replace("-", "")
-                    cname = f"Bus_Arrival_Log_{safe_date}_completed.xlsx"
-                    cpath = os.path.join(self.current_dir, cname)
-                    with pd.ExcelWriter(cpath, engine='openpyxl') as cw:
-                        day_df.to_excel(cw, sheet_name=biz_date, index=False)
+                    # 파일명 한글화 + 충돌 방지
+                    cname_base = f"운행기록_{safe_date}_완료.xlsx"
+                    cpath = self._unique_path(os.path.join(self.current_dir, cname_base))  # 운영체제에 맞는 경로 구분자로 경로를 조합
+                    cname = os.path.basename(cpath)  # 경로에서 파일명만 추출 예) "/foo/bar.txt" → "bar.txt"
+                    with pd.ExcelWriter(cpath, engine='openpyxl') as cw:  # 엑셀 파일에 여러 시트를 쓸 수 있는 컨텍스트 매니저
+                        day_df.to_excel(cw, sheet_name=biz_date, index=False)  # DataFrame을 엑셀 시트로 저장
                         self._apply_excel_style(cw.sheets[biz_date], day_df)
                     self._completed_dates_saved.add(biz_date)
-                    self.log(f"📁 완결 파일 저장: {cname}")
+                    removed_dates.add(biz_date)
+                    self.log(f"📁 완결 파일 저장: {cname}")  # 로그창에 메시지 출력
+
+            # 완결 처리된 영업일 데이터를 recorded_data에서 제거 (메모리 관리)
+            if removed_dates:
+                self.recorded_data = [
+                    row for row in self.recorded_data
+                    if get_biz_date(row[0]) not in removed_dates
+                ]
+                self.log(f"🗑 완결 데이터 캐시 정리: {sorted(removed_dates)}")  # 로그창에 메시지 출력
 
             self._saved_record_count = len(self.recorded_data)
             return True
         except PermissionError:
-            self.log("⚠ 엑셀 파일이 열려 있어 저장을 건너뜁니다.")
+            self.log("⚠ 엑셀 파일이 열려 있어 저장을 건너뜁니다.")  # 로그창에 메시지 출력
             return False
         except Exception as e:
-            self.log(f"❌ 저장 오류: {e}")
+            self.log(f"❌ 저장 오류: {e}")  # 로그창에 메시지 출력
             return False
 
     def _apply_excel_style(self, ws, df):
+        """3-30. 엑셀 시트에 헤더 서식(배경색·굵기·중앙정렬)과 열 너비를 적용합니다."""
+        # 헤더 배경: 연한 하늘색(#DDEBF7) 단색 채우기
         hfill  = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
-        hfont  = Font(bold=True, size=11)
-        halign = Alignment(horizontal='center', vertical='center')
+        hfont  = Font(bold=True, size=11)   # 헤더 글꼴: 굵게, 11pt
+        halign = Alignment(horizontal='center', vertical='center')   # 가운데 정렬
+        # 열별 너비 조정 규칙: 데이터 최대 길이(base_w)에 열 특성에 맞는 여유값을 더합니다.
         col_widths = {
-            "데이터시각":      lambda b: b + 1,
-            "운행시작/종료":   lambda b: b + 7,   # 차량번호 열 기준 + 한글 1자 추가
-            "정류소이름(번호)": lambda b: b + 15,  # 기존 도착정류소명 너비의 2/3
-            "노선":            lambda b: b + 8,
+            "데이터시각":       lambda b: b + 1,    # YYYY-MM-DD HH:MM:SS — 고정 길이
+            "운행시작/종료":    lambda b: b + 7,    # 한글 값 — 추가 여유 필요
+            "정류소이름(번호)": lambda b: b + 15,   # 긴 정류소명 — 가장 넓게
+            "노선":             lambda b: b + 8,    # 노선명 — 중간 정도
         }
-        for ci, col in enumerate(df.columns):
-            cell = ws.cell(row=1, column=ci + 1)
+        for ci, col in enumerate(df.columns):  # 리스트를 (인덱스, 값) 쌍으로 순회
+            cell = ws.cell(row=1, column=ci + 1)   # 헤더는 항상 1번 행
             cell.fill, cell.font, cell.alignment = hfill, hfont, halign
-            max_len = df[col].astype(str).map(len).max()
-            base_w  = max(max_len, len(str(col)))
+            max_len = df[col].astype(str).map(len).max()   # 이 열 데이터 최대 문자 수
+            base_w  = max(max_len, len(str(col)))   # 헤더 이름 길이와 데이터 최대 길이 중 큰 값
+            # col_widths에 없는 열이면 기본값으로 +5를 더합니다.
             ws.column_dimensions[cell.column_letter].width = (
                 col_widths.get(col, lambda b: b + 5)(base_w))
 
-    # ──────────────────────────────────────────
-    # 유틸리티
-    # ──────────────────────────────────────────
-
     def log(self, msg):
+        """3-31. 로그창에 현재 시각 타임스탬프와 함께 메시지를 추가합니다.
+        after(0)으로 메인 스레드에서 실행하며, 3000줄 초과 시 오래된 줄 삭제합니다.
+        """
         def _do():
-            self.log_text.config(state="normal")
-            self.log_text.insert("end", datetime.now().strftime("[%H:%M:%S] ") + msg + "\n")
+            self.log_text.config(state="normal")   # 편집 잠금 해제
+            # "[HH:MM:SS] " 타임스탬프를 앞에 붙여서 메시지를 추가합니다.
+            self.log_text.insert("end", datetime.now().strftime("[%H:%M:%S] ") + msg + "\n")  # 현재 날짜+시각을 datetime 객체로 반환
+            # 로그가 3000줄 초과 시 가장 오래된 줄부터 삭제합니다.
             if int(self.log_text.index("end-1c").split(".")[0]) > 3000:
                 self.log_text.delete("1.0", "2.0")
-            self.log_text.see("end")
-            self.log_text.config(state="disabled")
-        self.root.after(0, _do)
+            self.log_text.see("end")   # 스크롤을 항상 최신 로그 위치로 이동
+            self.log_text.config(state="disabled")   # 다시 읽기 전용으로 잠금
+        # after(0): 백그라운드 스레드에서 호출해도 메인 스레드에서 안전하게 실행됩니다.
+        self.root.after(0, _do)  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
 
     def format_hhmm(self, raw):
-        if not raw or len(raw) < 4:
+        """3-32. 서울시 버스 API의 시각 원문을 HH:MM 형식으로 변환합니다.
+        14자리(YYYYMMDDHHmmss) 또는 4자리(HHmm) 형식을 처리합니다.
+        """
+        if not raw or len(raw) < 4:   # 값이 없거나 너무 짧으면 그대로 반환
             return raw
+        # 14자리("YYYYMMDDHHmmss"): 8~9번째=시, 10~11번째=분
+        # 4자리("HHmm"): 0~1번째=시, 2~3번째=분
         return f"{raw[8:10]}:{raw[10:12]}" if len(raw) >= 14 else f"{raw[:2]}:{raw[2:4]}"
 
     def format_datetm(self, raw):
-        if not raw:
-            return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        raw = str(raw).strip()
+        """3-33. API 응답의 dataTm 필드를 'YYYY-MM-DD HH:MM:SS' 형식으로 변환합니다.
+        14자리 또는 12자리 형식을 처리하며, 변환 실패 시 현재 시각을 반환합니다.
+        """
+        if not raw:  # raw가 None이거나 빈 문자열이면 현재 시각 사용
+            return datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 현재 날짜+시각을 datetime 객체로 반환
+        raw = str(raw).strip()  # 앞뒤 공백 제거
         try:
             if len(raw) == 14:
+                # "20250301043015" → "2025-03-01 04:30:15"
                 return (f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]} "
                         f"{raw[8:10]}:{raw[10:12]}:{raw[12:14]}")
             if len(raw) == 12:
+                # "202503010430" → "2025-03-01 04:30:00" (초 없는 12자리)
                 return (f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]} "
                         f"{raw[8:10]}:{raw[10:12]}:00")
         except Exception:
             pass
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 현재 날짜+시각을 datetime 객체로 반환
 
-    # ══════════════════════════════════════════════
-    # 인증키 입력 팝업
-    # ══════════════════════════════════════════════
-    def show_key_input(self):
-        if getattr(self, "_key_win", None) is not None:
+    def show_key_input(self):  # 3-XX. 인증키 입력 다이얼로그를 표시합니다.
+        if getattr(self, "_key_win", None) is not None:  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
             try:
-                if self._key_win.winfo_exists():
-                    self._key_win.lift(); self._key_win.focus_force(); return
+                if self._key_win.winfo_exists():  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    self._key_win.lift(); self._key_win.focus_force(); return  # 창을 다른 창 앞으로 가져옴
             except Exception:
                 pass
 
         win = tk.Toplevel(self.root)
         win.title("인증키 입력")
         win.resizable(False, False)
-        win.grab_set()           # ① grab_set 먼저 (갱신주기 창과 동일 순서)
-        win.transient(self.root) # ② transient 나중에
+        win.grab_set()  # 이 창이 열린 동안 다른 창의 입력 차단 (모달 동작)
+        win.transient(self.root)  # 이 창의 부모를 지정 → 부모 최소화 시 함께 숨겨짐
         self._key_win = win
-        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<Escape>", lambda e: win.destroy())  # 창 또는 위젯을 완전히 제거
 
         fr = tk.Frame(win)
         fr.pack(padx=16, pady=14, fill="both")
 
         tk.Label(fr, text="메인 인증키 (64자리, 필수)", font=(FONT, 9, "bold"),
-                 anchor="w").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        ent_main = tk.Entry(fr, width=70, font=(FONT_MONO, 8))
+                 anchor="w").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))   # 왼쪽 정렬
+        ent_main = tk.Entry(fr, width=70, font=(FONT_MONO, 8))   # 메인키 입력 필드
         ent_main.insert(0, self._key_main)
-        ent_main.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ent_main.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))   # east-west: 좌우 방향으로 꽉 채움
 
         tk.Label(fr, text="보조 인증키 (64자리 또는 공란)", font=(FONT, 9, "bold"),
-                 anchor="w").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        ent_back = tk.Entry(fr, width=70, font=(FONT_MONO, 8))
+                 anchor="w").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 2))   # 왼쪽 정렬
+        ent_back = tk.Entry(fr, width=70, font=(FONT_MONO, 8))   # 백업키 입력 필드
         ent_back.insert(0, self._key_back)
-        ent_back.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        ent_back.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))   # east-west: 좌우 방향으로 꽉 채움
 
-        lbl_status_m = tk.Label(fr, text="", font=(FONT, 8), fg="red", anchor="w")
-        lbl_status_m.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        lbl_status_b = tk.Label(fr, text="", font=(FONT, 8), fg="red", anchor="w")
-        lbl_status_b.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        lbl_status_m = tk.Label(fr, text="", font=(FONT, 8), fg="red", anchor="w")   # 왼쪽 정렬
+        lbl_status_m.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 2))   # 그리드 레이아웃으로 배치 (행·열 지정)
+        lbl_status_b = tk.Label(fr, text="", font=(FONT, 8), fg="red", anchor="w")   # 왼쪽 정렬
+        lbl_status_b.grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 4))   # 그리드 레이아웃으로 배치 (행·열 지정)
 
-        btn_ok = tk.Button(fr, text="입력", width=10, state="disabled")
-        btn_ok.grid(row=6, column=0, pady=(0, 4), padx=(0, 6), sticky="e")
+        btn_ok = tk.Button(fr, text="입력", width=10, state="disabled")   # 초기에는 비활성화 — 인증키 입력 후 활성화됨
+        btn_ok.grid(row=6, column=0, pady=(0, 4), padx=(0, 6), sticky="e")   # 그리드 레이아웃으로 배치 (행·열 지정)
         tk.Button(fr, text="취소", width=10,
-                  command=win.destroy).grid(row=6, column=1, pady=(0, 4), sticky="w")
+                  command=win.destroy).grid(row=6, column=1, pady=(0, 4), sticky="w")   # 그리드 레이아웃으로 배치 (행·열 지정)
 
         def _check_len(*_):
             km = len(ent_main.get().strip())
@@ -1838,15 +2034,15 @@ class DJBusRecorder:
         def _enter_ok(e=None):
             if btn_ok["state"] == "normal":
                 _do_ok()
-        ent_main.bind("<Return>", _enter_ok)
-        ent_back.bind("<Return>", _enter_ok)
+        ent_main.bind("<Return>", _enter_ok)   # Enter 키 이벤트 연결
+        ent_back.bind("<Return>", _enter_ok)   # Enter 키 이벤트 연결
 
         def _do_ok():
-            km = ent_main.get().strip()
-            kb = ent_back.get().strip()
+            km = ent_main.get().strip()  # 앞뒤 공백 제거
+            kb = ent_back.get().strip()  # 앞뒤 공백 제거
             lbl_status_m.config(text="인증키 검증 중…", fg="gray")
             lbl_status_b.config(text="", fg="red")
-            win.update_idletasks()
+            win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
 
             def _test_key(k):
                 if not k:
@@ -1860,18 +2056,18 @@ class DJBusRecorder:
                     "INVALID KEY", "AUTHENTICATION",
                 )
                 try:
-                    resp = requests.get(
+                    resp = requests.get(  # HTTP GET 요청 전송 — API 서버에 데이터를 요청
                         URL_SRCH,
                         params={"ServiceKey": k, "strSrch": "13"},
                         timeout=8
                     )
                     self.api_stats_today["SRCH"] += 1
-                    raw  = resp.text.upper()
+                    raw  = resp.text.upper()  # 대문자로 변환 (대소문자 구분 없이 비교하기 위해)
                     if any(p in raw for p in _LIMIT_PATTERNS):
                         return "LIMIT"
-                    root = ET.fromstring(resp.text)
-                    code = (root.findtext(".//headerCd") or "").strip()
-                    msg  = (root.findtext(".//headerMsg") or "").strip()
+                    root = ET.fromstring(resp.text)  # XML 문자열 → ElementTree 트리 구조로 파싱
+                    code = (root.findtext(".//headerCd") or "").strip()  # 앞뒤 공백 제거
+                    msg  = (root.findtext(".//headerMsg") or "").strip()  # 앞뒤 공백 제거
                     if code == "0" or code == "3":
                         return True
                     if any(p in raw for p in _REJECT_PATTERNS):
@@ -1909,120 +2105,114 @@ class DJBusRecorder:
                         if len(warn_parts) > 1:
                             lbl_status_b.config(
                                 text="⚠ " + warn_parts[1], fg="orange")
-                        self._key_main = km
-                        self._key_back = kb
+                        self._key_main = km  # 메인 API 인증키 (평문, 런타임에만 메모리에 존재)
+                        self._key_back = kb  # 백업 API 인증키
                         self._save_config()
-                        self.log(f"인증키 등록 완료 (한도초과 경고 포함 / "
+                        self.log(f"인증키 등록 완료 (한도초과 경고 포함 / "  # 로그창에 메시지 출력
                                  f"메인: 설정됨, 보조: {'설정됨' if kb else '없음'})")
-                        win.after(1800, win.destroy)
+                        win.after(1800, win.destroy)   # 1.8초 후 인증키 창 자동 닫기
                     else:
-                        self._key_main = km
-                        self._key_back = kb
+                        self._key_main = km  # 메인 API 인증키 (평문, 런타임에만 메모리에 존재)
+                        self._key_back = kb  # 백업 API 인증키
                         self._save_config()
-                        self.log(f"인증키 등록 완료 (메인: 설정됨, "
+                        self.log(f"인증키 등록 완료 (메인: 설정됨, "  # 로그창에 메시지 출력
                                  f"보조: {'설정됨' if kb else '없음'})")
-                        win.destroy()
-                self.root.after(0, _ui)
+                        win.destroy()  # 창 또는 위젯을 완전히 제거
+                self.root.after(0, _ui)  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
 
-            threading.Thread(target=_run, daemon=True).start()
+            threading.Thread(target=_run, daemon=True).start()  # 새 스레드 생성 (병렬 실행)
 
         btn_ok.config(command=_do_ok)
 
-        # ③ 갱신주기 창과 동일: self.root 기준 위치, 크기 포함 geometry, wait_window
-        self.root.update_idletasks()
-        win.update_idletasks()
-        w = win.winfo_reqwidth()
-        h = win.winfo_reqheight()
-        px = self.root.winfo_x() + self.root.winfo_width()  // 2 - w // 2
-        py = self.root.winfo_y() + self.root.winfo_height() // 2 - h // 2
+        self.root.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        # winfo_reqwidth/height: 위젯이 필요로 하는 최소 너비·높이 (실제 표시 크기)
+        w = win.winfo_reqwidth()   # 위젯이 필요로 하는 최소 너비
+        h = win.winfo_reqheight()   # 위젯이 필요로 하는 최소 높이
+        px = self.root.winfo_x() + self.root.winfo_width()  // 2 - w // 2  # 위젯의 현재 너비(픽셀)
+        py = self.root.winfo_y() + self.root.winfo_height() // 2 - h // 2  # 위젯의 현재 높이(픽셀)
         win.geometry(f"{w}x{h}+{px}+{py}")
-        win.wait_window()
+        win.wait_window()  # 이 창이 닫힐 때까지 현재 실행을 일시 정지
 
-    # ══════════════════════════════════════════════
-    # 노선 검색 팝업
-    # ══════════════════════════════════════════════
-    def show_route_search(self):
-        """노선 검색 팝업 (getBusRouteList API 이용)."""
-        if getattr(self, "_srch_win", None) is not None:
+    def show_route_search(self):  # 노선 검색 다이얼로그 열기
+        """3-25. 노선 검색 다이얼로그를 표시합니다.
+        노선번호 또는 노선명으로 서울시 SRCH API를 검색하고,
+        결과에서 노선을 선택하면 _load_route_from_search()를 호출합니다.  # 검색 결과에서 선택한 노선을 추가
+        즐겨찾기 관리 및 API 키 설정도 이 창에서 수행합니다.
+        """
+        if getattr(self, "_srch_win", None) is not None:  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
             try:
-                if self._srch_win.winfo_exists():
-                    self._srch_win.lift(); self._srch_win.focus_force(); return
+                if self._srch_win.winfo_exists():  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    self._srch_win.lift(); self._srch_win.focus_force(); return  # 창을 다른 창 앞으로 가져옴
             except Exception:
                 pass
 
         win = tk.Toplevel(self.root)
         win.title("노선 검색")
         win.resizable(True, False)
-        win.transient(self.root)
-        self._srch_win = win
+        win.transient(self.root)  # 이 창의 부모를 지정 → 부모 최소화 시 함께 숨겨짐
+        self._srch_win = win   # 검색 창 참조 저장 (중복 생성 방지)
 
-        # ── 즐겨찾기 섹션 ──
-        fav_outer = tk.Frame(win)
+        fav_outer = tk.Frame(win)   # 즐겨찾기 영역 컨테이너
         fav_outer.pack(fill="x", padx=10, pady=(8, 2))
-        tk.Label(fav_outer, text="⭐ 즐겨찾기", font=(FONT, 9, "bold")).pack(side="left", padx=(0, 6))
-        fav_fr = tk.Frame(fav_outer)
-        fav_fr.pack(side="left", fill="x", expand=True)
+        tk.Label(fav_outer, text="⭐ 즐겨찾기", font=(FONT, 9, "bold")).pack(side="left", padx=(0, 6))   # 왼쪽부터 차례로 배치
+        fav_fr = tk.Frame(fav_outer)   # 즐겨찾기 버튼들을 담는 프레임
+        fav_fr.pack(side="left", fill="x", expand=True)   # 왼쪽부터 차례로 배치
 
+        # 즐겨찾기 버튼을 삭제 후 다시 그립니다 (즐겨찾기 추가/삭제 후 갱신)
         def _refresh_fav_buttons():
-            """즐겨찾기 버튼 목록을 갱신합니다."""
-            for w in fav_fr.winfo_children():
-                w.destroy()
-            for nm, rd in list(self._favorites.items()):
-                def _on_fav(route=rd):
-                    # 즐겨찾기 클릭 → 로드 즉시 실행
-                    if not self._key_main:
-                        lbl_hint_ref[0].config(
+            # 기존 버튼 전부 제거 후 현재 즐겨찾기로 재생성
+            for w in fav_fr.winfo_children():   # 이 위젯의 직접 자식 위젯 목록
+                w.destroy()  # 창 또는 위젯을 완전히 제거
+            for nm, rd in list(self._favorites.items()):  # 딕셔너리를 (키, 값) 튜플 쌍으로 순회
+                def _on_fav(route=rd):   # 즐겨찾기 버튼 클릭 → 해당 노선 로드
+                    if not self._key_main:   # 인증키가 입력되지 않았으면 검색 불가
+                        lbl_hint_ref[0].config(   # 힌트 레이블 텍스트·색상 갱신
                             text="먼저 인증키를 등록하세요.", fg="red")
                         return
-                    lbl_hint_ref[0].config(text=f"[{route['busRouteNm']}] 로드 중…", fg="gray")
-                    win.update_idletasks()
-                    threading.Thread(
+                    lbl_hint_ref[0].config(text=f"[{route['busRouteNm']}] 로드 중…", fg="gray")   # 힌트 레이블 텍스트·색상 갱신
+                    win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+                    threading.Thread(  # 새 스레드 생성 (병렬 실행)
                         target=self._load_route_from_search,
-                        args=(route, win), daemon=True).start()
-                def _on_fav_del(name=nm):
-                    del self._favorites[name]
-                    self._save_favorites()
+                        args=(route, win), daemon=True).start()   # 스레드 실행 시작
+                def _on_fav_del(name=nm):   # ✕ 버튼 클릭 → 즐겨찾기에서 삭제
+                    del self._favorites[name]   # 딕셔너리에서 해당 항목 제거
+                    self._save_favorites()  # 현재 노선 목록을 설정 파일에 저장
                     _refresh_fav_buttons()
-                btn_f = tk.Frame(fav_fr)
-                btn_f.pack(side="left", padx=(0, 4))
+                btn_f = tk.Frame(fav_fr)   # 노선 이름 버튼 + ✕ 버튼을 묶는 작은 컨테이너
+                btn_f.pack(side="left", padx=(0, 4))   # 왼쪽부터 차례로 배치
                 tk.Button(btn_f, text=nm, font=(FONT, 8),
-                          relief="groove", command=_on_fav).pack(side="left")
+                          relief="groove", command=_on_fav).pack(side="left")   # 왼쪽부터 차례로 배치
                 tk.Button(btn_f, text="✕", font=(FONT, 7), fg="red",
-                          relief="flat", command=_on_fav_del).pack(side="left")
-            if not self._favorites:
+                          relief="flat", command=_on_fav_del).pack(side="left")   # 왼쪽부터 차례로 배치
+            if not self._favorites:   # 즐겨찾기가 비어있으면 안내 텍스트 표시
                 tk.Label(fav_fr, text="(즐겨찾기 없음)", font=(FONT, 8),
-                         fg="gray").pack(side="left")
+                         fg="gray").pack(side="left")   # 왼쪽부터 차례로 배치
 
         _refresh_fav_buttons()
 
-        # ── 검색 입력 행 (노선번호검색 : / 입력창 / 검색 / 이 노선으로 설정) ──
-        top_fr = tk.Frame(win)
+        top_fr = tk.Frame(win)   # 검색어 입력 영역 컨테이너
         top_fr.pack(fill="x", padx=10, pady=(4, 2))
-        tk.Label(top_fr, text="노선번호검색 :", font=(FONT, 9)).pack(side="left")
-        ent = tk.Entry(top_fr, width=14, font=(FONT, 9))
-        ent.pack(side="left", padx=(4, 8))
-        # 버튼은 _search/_select 정의 후 top_fr 에 추가
+        tk.Label(top_fr, text="노선번호검색 :", font=(FONT, 9)).pack(side="left")   # 왼쪽부터 차례로 배치
+        ent = tk.Entry(top_fr, width=14, font=(FONT, 9))   # 노선 번호 입력 필드 (최대 14자)
+        ent.pack(side="left", padx=(4, 8))   # 왼쪽부터 차례로 배치
 
-        # ── 안내 행 1: 사용법 안내 ──
-        guide_fr = tk.Frame(win)
+        guide_fr = tk.Frame(win)   # 사용 안내 텍스트 영역
         guide_fr.pack(fill="x", padx=10, pady=(0, 1))
         tk.Label(guide_fr,
                  text="노선 번호 검색  →  원하는 노선 클릭  →  이 노선으로 설정 버튼 클릭",
-                 font=(FONT, 8), fg="#555555").pack(side="left")
+                 font=(FONT, 8), fg="#555555").pack(side="left")   # 왼쪽부터 차례로 배치
 
-        # ── 안내 행 2: 대소문자 주의(좌) + 상태메시지(우) ──
-        info_fr = tk.Frame(win)
+        info_fr = tk.Frame(win)   # 추가 안내 텍스트 영역
         info_fr.pack(fill="x", padx=10, pady=(0, 4))
         tk.Label(info_fr,
                  text="※ N37번 노선 등 알파벳은 대소문자를 구분합니다.",
-                 font=(FONT, 8), fg="gray").pack(side="left")
+                 font=(FONT, 8), fg="gray").pack(side="left")   # 왼쪽부터 차례로 배치
         lbl_hint = tk.Label(info_fr, text="", font=(FONT, 8), fg="green")
-        lbl_hint.pack(side="right")
+        lbl_hint.pack(side="right")   # 오른쪽 끝에 배치
 
-        # lbl_hint_ref: _search 클로저에서 참조할 mutable holder
-        lbl_hint_ref = [lbl_hint]  # 즉시 설정
+        lbl_hint_ref = [lbl_hint]   # 힌트 레이블 참조 (리스트로 감싸 중첩 함수에서 수정 가능)
 
-        # ── 결과 Treeview ──
         cols = ("no", "type", "first", "last", "first_tm", "last_tm", "length")
         tree = ttk.Treeview(win, columns=cols, show="headings",
                             height=8, selectmode="browse")
@@ -2040,45 +2230,43 @@ class DJBusRecorder:
             tree.column(cid, width=w, anchor=anc, stretch=(cid == "no"))
         sb = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=sb.set)
-        tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=4)
-        sb.pack(side="left", fill="y", pady=4, padx=(0, 6))
+        tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=4)   # 왼쪽부터 차례로 배치
+        sb.pack(side="left", fill="y", pady=4, padx=(0, 6))   # 왼쪽부터 차례로 배치
 
-        # ESC 키로 창 닫기
-        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<Escape>", lambda e: win.destroy())  # 창 또는 위젯을 완전히 제거
 
-        # iid → route 원본 매핑
         _route_map = {}
 
         def _search(*_):
-            q = ent.get().strip()
-            if not q:
-                lbl_hint_ref[0].config(text="노선번호를 입력하세요", fg="red")
+            q = ent.get().strip()  # 앞뒤 공백 제거
+            if not q:   # 검색어가 비어있으면 무시
+                lbl_hint_ref[0].config(text="노선번호를 입력하세요", fg="red")   # 힌트 레이블 텍스트·색상 갱신
                 return
-            if not self._key_main:
-                lbl_hint_ref[0].config(text="먼저 인증키를 등록하세요", fg="red")
+            if not self._key_main:   # 인증키가 입력되지 않았으면 검색 불가
+                lbl_hint_ref[0].config(text="먼저 인증키를 등록하세요", fg="red")   # 힌트 레이블 텍스트·색상 갱신
                 return
-            lbl_hint_ref[0].config(text="검색 중…", fg="gray")
-            win.update_idletasks()
+            lbl_hint_ref[0].config(text="검색 중…", fg="gray")   # 힌트 레이블 텍스트·색상 갱신
+            win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
 
             def _run():
                 try:
-                    resp = requests.get(
+                    resp = requests.get(  # HTTP GET 요청 전송 — API 서버에 데이터를 요청
                         URL_SRCH,
                         params={"ServiceKey": self._key_main,
                                 "strSrch": q},
                         timeout=10
                     )
-                    root = ET.fromstring(resp.text)
-                    items = root.findall(".//itemList")
-                    self.api_stats_today["SRCH"] += 1  # SRCH 호출 횟수 통계
+                    root = ET.fromstring(resp.text)  # XML 문자열 → ElementTree 트리 구조로 파싱
+                    items = root.findall(".//itemList")  # XML 트리에서 지정 경로와 일치하는 모든 요소를 리스트로 반환
+                    self.api_stats_today["SRCH"] += 1
                     if not items:
-                        self.root.after(0, lambda: lbl_hint_ref[0].config(
+                        self.root.after(0, lambda: lbl_hint_ref[0].config(  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
                             text="검색 결과 없음", fg="orange"))
                         return
 
                     def _tx(el, tag):
                         nd = el.find(tag)
-                        return (nd.text or "").strip() if nd is not None else ""
+                        return (nd.text or "").strip() if nd is not None else ""  # 앞뒤 공백 제거
 
                     rows = []
                     for it in items:
@@ -2097,58 +2285,53 @@ class DJBusRecorder:
                     def _ui():
                         for ch in tree.get_children():
                             tree.delete(ch)
-                        _route_map.clear()
+                        _route_map.clear()  # 딕셔너리·집합의 모든 항목 삭제
                         for r in rows:
                             rtype_lbl = ROUTE_TYPE_LABEL.get(r["routeType"], r["routeType"])
-                            # 시각 포맷: 14자리(YYYYMMDDHHmmSS) → HH:MM
-                            # 예) 20260312042000 → 04:20
                             def _fmt_tm(raw):
-                                digits = ''.join(c for c in raw.strip() if c.isdigit())
+                                digits = ''.join(c for c in raw.strip() if c.isdigit())  # 앞뒤 공백 제거
                                 if len(digits) >= 12:
-                                    # 14자리: YYYYMMDD(8) + HH(2) + mm(2) + SS(2)
                                     return f"{digits[8:10]}:{digits[10:12]}"
                                 if len(digits) >= 4:
-                                    # 짧은 형식 fallback: 앞 4자리 HHMM
                                     return f"{digits[:2]}:{digits[2:4]}"
-                                return raw.strip()
+                                return raw.strip()  # 앞뒤 공백 제거
                             ftm = _fmt_tm(r["firstBusTm"])
                             ltm = _fmt_tm(r["lastBusTm"])
-                            lkm = f"{int(r['length'])//1000:,}km" if r["length"].isdigit() else r["length"]
+                            lkm = f"{int(r['length'])//1000:,}km" if r["length"].isdigit() else r["length"]  # 문자열이 숫자만으로 이루어졌으면 True
                             iid = r["busRouteId"]
-                            tree.insert("", "end", iid=iid,
+                            tree.insert("", "end", iid=iid,   # 행의 고유 ID (나중에 선택한 행을 찾을 때 사용)
                                         values=(r["busRouteNm"], rtype_lbl,
                                                 r["stStationNm"], r["edStationNm"],
                                                 ftm, ltm, lkm))
                             _route_map[iid] = r
-                        lbl_hint_ref[0].config(text=f"{len(rows)}개 노선 검색됨", fg="green")
-                    self.root.after(0, _ui)
+                        lbl_hint_ref[0].config(text=f"{len(rows)}개 노선 검색됨", fg="green")   # 힌트 레이블 텍스트·색상 갱신
+                    self.root.after(0, _ui)  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
                 except Exception as e:
-                    self.root.after(0, lambda: lbl_hint_ref[0].config(
+                    self.root.after(0, lambda: lbl_hint_ref[0].config(  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
                         text=f"오류: {e}", fg="red"))
 
-            threading.Thread(target=_run, daemon=True).start()
+            threading.Thread(target=_run, daemon=True).start()  # 새 스레드 생성 (병렬 실행)
 
-        # ── top_fr 에 검색·설정 버튼 추가 ──
         def _select():
-            sel = tree.selection()
+            sel = tree.selection()   # 현재 선택된 항목 반환
             if not sel:
-                lbl_hint_ref[0].config(text="노선을 먼저 선택하세요", fg="red")
+                lbl_hint_ref[0].config(text="노선을 먼저 선택하세요", fg="red")   # 힌트 레이블 텍스트·색상 갱신
                 return
             rid = sel[0]
             r   = _route_map.get(rid)
             if not r:
                 return
-            lbl_hint_ref[0].config(text=f"[{r['busRouteNm']}] 로드 중…", fg="gray")
-            win.update_idletasks()
-            threading.Thread(
+            lbl_hint_ref[0].config(text=f"[{r['busRouteNm']}] 로드 중…", fg="gray")   # 힌트 레이블 텍스트·색상 갱신
+            win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+            threading.Thread(  # 새 스레드 생성 (병렬 실행)
                 target=self._load_route_from_search,
-                args=(r, win), daemon=True).start()
+                args=(r, win), daemon=True).start()   # 스레드 실행 시작
 
         def _add_fav():
-            """현재 선택된 노선을 즐겨찾기에 추가합니다."""
-            sel = tree.selection()
+            
+            sel = tree.selection()   # 현재 선택된 항목 반환
             if not sel:
-                lbl_hint_ref[0].config(text="노선을 먼저 선택하세요", fg="red")
+                lbl_hint_ref[0].config(text="노선을 먼저 선택하세요", fg="red")   # 힌트 레이블 텍스트·색상 갱신
                 return
             rid = sel[0]
             r   = _route_map.get(rid)
@@ -2156,65 +2339,60 @@ class DJBusRecorder:
                 return
             nm = r["busRouteNm"]
             if nm in self._favorites:
-                lbl_hint_ref[0].config(text=f"이미 즐겨찾기에 있습니다: {nm}", fg="orange")
+                lbl_hint_ref[0].config(text=f"이미 즐겨찾기에 있습니다: {nm}", fg="orange")   # 힌트 레이블 텍스트·색상 갱신
                 return
             self._favorites[nm] = r
-            self._save_favorites()
+            self._save_favorites()  # 현재 노선 목록을 설정 파일에 저장
             _refresh_fav_buttons()
-            lbl_hint_ref[0].config(text=f"⭐ 즐겨찾기 추가: {nm}", fg="green")
+            lbl_hint_ref[0].config(text=f"⭐ 즐겨찾기 추가: {nm}", fg="green")   # 힌트 레이블 텍스트·색상 갱신
 
         btn_search_w = tk.Button(top_fr, text="검색", width=7, command=_search)
-        btn_search_w.pack(side="left", padx=(0, 20))   # 검색↔이 노선으로 설정 20px 여백
+        btn_search_w.pack(side="left", padx=(0, 20))   # 왼쪽부터 차례로 배치
         btn_set_w = tk.Button(top_fr, text="이 노선으로 설정", width=14, command=_select)
-        btn_set_w.pack(side="left", padx=(0, 10))
+        btn_set_w.pack(side="left", padx=(0, 10))   # 왼쪽부터 차례로 배치
         btn_fav_add = tk.Button(top_fr, text="⭐ 즐겨찾기 추가", width=13, command=_add_fav)
-        btn_fav_add.pack(side="left", padx=(0, 4))
+        btn_fav_add.pack(side="left", padx=(0, 4))   # 왼쪽부터 차례로 배치
 
-        # Enter 키로도 검색
-        ent.bind("<Return>", _search)
+        ent.bind("<Return>", _search)   # Enter 키 이벤트 연결
 
-        # Treeview 더블클릭 → _select 자동 실행
-        tree.bind("<Double-1>", lambda e: _select())
-        tree.bind("<Return>",   lambda e: _select())
+        tree.bind("<Double-1>", lambda e: _select())   # 더블클릭 이벤트 연결
+        tree.bind("<Return>",   lambda e: _select())   # Enter 키 이벤트 연결
 
-        # 버튼 하단 위치
-        win.update_idletasks()
-        bx = self.btn_srch.winfo_rootx()
-        by = self.btn_srch.winfo_rooty() + self.btn_srch.winfo_height()
+        win.update_idletasks()  # 보류된 UI 갱신 작업을 즉시 처리 (좌표 계산 전 필수)
+        bx = self.btn_srch.winfo_rootx()  # 위젯의 화면 절대 X 좌표
+        by = self.btn_srch.winfo_rooty() + self.btn_srch.winfo_height()  # 위젯의 화면 절대 Y 좌표
         win.geometry(f"+{bx}+{by}")
-        ent.focus_set()
+        ent.focus_set()  # 이 위젯에 키보드 포커스 설정
 
-    # ══════════════════════════════════════════════
-    # 검색된 노선 → 실제 노선 데이터로 변환·등록
-    # ══════════════════════════════════════════════
-    def _load_route_from_search(self, r, win):
-        """getStaionByRoute + getRouteInfo 로 노선 상세 정보를 불러와 등록합니다."""
+    def _load_route_from_search(self, r, win):  # 검색 결과에서 선택한 노선을 추가
+        """3-26. 검색 결과에서 선택한 노선을 프로그램에 추가합니다.
+        SLST·RINF API를 호출하여 정류소 목록과 노선 정보를 구성하고,
+        routes 목록에 추가 후 RouteMapPanel을 생성하며 즐겨찾기에도 저장합니다.
+        """
         rid  = r["busRouteId"]
         rnm  = r["busRouteNm"]
 
-        # ① 정류소 목록 확보 (SLST)
-        root_slst = self.fetch_api(URL_SLST, {"busRouteId": rid})
-        items     = root_slst.findall(".//itemList") if root_slst is not None else []
+        root_slst = self.fetch_api(URL_SLST, {"busRouteId": rid})   # 정류소 목록 API 호출 (정류소 수 확보)
+        items     = root_slst.findall(".//itemList") if root_slst is not None else []  # XML 트리에서 지정 경로와 일치하는 모든 요소를 리스트로 반환
         st_cnt    = len(items) if items else 100
 
         def _gf(el, tag):
             nd = el.find(tag)
-            return (nd.text or "").strip() if nd is not None else ""
+            return (nd.text or "").strip() if nd is not None else ""  # 앞뒤 공백 제거
 
         stations = []
         for item in items:
             seq_str = _gf(item, "seq")
             stations.append({
-                "seq":          int(seq_str) if seq_str.isdigit() else len(stations) + 1,
+                "seq":          int(seq_str) if seq_str.isdigit() else len(stations) + 1,  # 문자열이 숫자만으로 이루어졌으면 True
                 "name":         _gf(item, "stationNm") or "?",
                 "arsId":        _gf(item, "arsId"),
                 "station":      _gf(item, "station"),
-                "transYn":      _gf(item, "transYn").upper(),
+                "transYn":      _gf(item, "transYn").upper(),  # 대문자로 변환 (대소문자 구분 없이 비교하기 위해)
                 "fullSectDist": _gf(item, "fullSectDist"),
             })
         stations.sort(key=lambda s: s["seq"])
 
-        # ② 첫 / 두번째 / 마지막 / 직전(-1) 정류소 추출
         first_stid  = stations[0]["station"]  if stations else ""
         second_stid = stations[1]["station"]  if len(stations) >= 2 else ""
         last_stid   = stations[-1]["station"] if stations else ""
@@ -2223,25 +2401,24 @@ class DJBusRecorder:
         second_nm   = stations[1]["name"]     if len(stations) >= 2 else "?"
         last_nm     = stations[-1]["name"]    if stations else "?"
 
-        self.log(f"[{rnm}] 정류소 {st_cnt}개 · 첫정류소: {first_nm} / 두번째: {second_nm} / 종점: {last_nm}")
+        self.log(f"[{rnm}] 정류소 {st_cnt}개 · 첫정류소: {first_nm} / 두번째: {second_nm} / 종점: {last_nm}")  # 로그창에 메시지 출력
 
-        # ③ 노선 기본 정보 (RINF)
         corp_nm      = "서울시내버스"
         first_bus_tm = None
         last_bus_tm  = None
         rtype        = r.get("routeType", "3")
-        rlength      = r.get("length", "")
-        root_rinf    = self.fetch_api(URL_RINF, {"busRouteId": rid})
+        rlength      = r.get("length", "")  # 키가 없으면 빈 문자열 반환
+        root_rinf    = self.fetch_api(URL_RINF, {"busRouteId": rid})   # 노선 정보 API 호출 (첫차·막차 시각, 노선 유형)
         if root_rinf is not None:
-            fetched = root_rinf.findtext(".//corpNm")
+            fetched = root_rinf.findtext(".//corpNm")  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
             if fetched:
                 corp_nm = fetched
-            raw_first = root_rinf.findtext(".//firstBusTm") or ""
-            raw_last  = root_rinf.findtext(".//lastBusTm")  or ""
+            raw_first = root_rinf.findtext(".//firstBusTm") or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
+            raw_last  = root_rinf.findtext(".//lastBusTm")  or ""  # XML 트리에서 지정한 태그의 텍스트 내용을 반환 (없으면 None)
             if raw_first:
-                first_bus_tm = self.format_hhmm(raw_first)
+                first_bus_tm = self.format_hhmm(raw_first)  # 14자리 또는 4자리 시각 문자열 → "HH:MM" 형식으로 변환
             if raw_last:
-                last_bus_tm  = self.format_hhmm(raw_last)
+                last_bus_tm  = self.format_hhmm(raw_last)  # 14자리 또는 4자리 시각 문자열 → "HH:MM" 형식으로 변환
 
         route_data = {
             "rnm":          rnm,
@@ -2265,25 +2442,22 @@ class DJBusRecorder:
             "rlength":      rlength,
         }
 
-        # ④ 기존 동일 노선 교체 또는 신규 추가
-        exists = [i for i, rt in enumerate(self.routes) if rt["rid"] == rid]
+        exists = [i for i, rt in enumerate(self.routes) if rt["rid"] == rid]  # 리스트를 (인덱스, 값) 쌍으로 순회
         if exists:
             self.routes[exists[0]] = route_data
         else:
-            self.routes.append(route_data)
+            self.routes.append(route_data)   # 노선 딕셔너리를 self.routes에 추가
             if rnm not in ROUTE_MENU_ORDER:
                 ROUTE_MENU_ORDER.append(rnm)
 
-        self._selected_route = route_data
-        self.log(f"[{rnm}] 노선 등록 완료 · 운수사: {corp_nm} / 첫차: {first_bus_tm} / 막차: {last_bus_tm}")
+        self._selected_route = route_data   # 선택된 노선 정보를 임시 저장
+        self.log(f"[{rnm}] 노선 등록 완료 · 운수사: {corp_nm} / 첫차: {first_bus_tm} / 막차: {last_bus_tm}")  # 로그창에 메시지 출력
 
-        # ⑤ 메인 스레드에서 노선도 패널 갱신 + 창 닫기
         def _ui():
-            # 기존 패널이 있으면 재로드, 없으면 신규 생성
             if rnm not in self.route_map_panels:
                 panel = RouteMapPanel(self.route_map_container, rnm)
-                panel.place(relx=0, rely=0, relwidth=1, relheight=1)
-                panel.place_forget()
+                panel.place(relx=0, rely=0, relwidth=1, relheight=1)   # 컨테이너 전체를 꽉 채우도록 배치 (상대 좌표)
+                panel.place_forget()  # place()로 배치된 위젯을 화면에서 숨김
                 self.route_map_panels[rnm] = panel
             self.route_map_panels[rnm].load_route(
                 route_data["stations"],
@@ -2291,90 +2465,94 @@ class DJBusRecorder:
                 route_data["rlength"]
             )
             self.route_map_select(rnm)
-            # 노선 등록 완료 → "기록 시작" 메뉴 활성화
             self.menu_main.entryconfig(2, state="normal")
             try:
-                if win.winfo_exists():
-                    win.destroy()
+                if win.winfo_exists():  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    win.destroy()  # 창 또는 위젯을 완전히 제거
             except Exception:
                 pass
-        self.root.after(0, _ui)
+        self.root.after(0, _ui)  # 이벤트 루프에 즉시 실행 예약 (메인 스레드 안전 실행)
 
     def _on_root_click(self, event):
-        """메인창 클릭 시 API현황·프로그램정보 팝업을 닫습니다.
-        단, 팝업 내부 위젯을 클릭한 경우는 제외합니다."""
+        """3-34. 메인창 클릭 시 [API 현황]·[프로그램 정보]·[노선 검색] 팝업을 닫습니다.
+        팝업 내부 위젯 클릭은 닫지 않습니다.
+        """
         def _is_popup_child(widget, win):
-            """widget이 win 또는 그 자손인지 확인."""
+            """3-34-1. widget이 win 또는 그 하위 자손인지 확인합니다."""
             try:
                 w = widget
                 while w is not None:
                     if w == win:
                         return True
-                    w = w.master
+                    w = w.master  # 부모 위젯으로 한 단계 거슬러 올라감
             except Exception:
                 pass
             return False
 
-        clicked = event.widget
+        clicked = event.widget  # 실제 클릭된 위젯
 
-        # API 현황 팝업 닫기
-        api_win = getattr(self, "_api_win", None)
+        api_win = getattr(self, "_api_win", None)  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
         if api_win is not None:
             try:
-                if api_win.winfo_exists() and not _is_popup_child(clicked, api_win):
-                    api_win.destroy()
+                if api_win.winfo_exists() and not _is_popup_child(clicked, api_win):  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    api_win.destroy()  # 창 또는 위젯을 완전히 제거
             except Exception:
                 pass
 
-        # 프로그램 정보 팝업 닫기
-        info_win = getattr(self, "info_window", None)
+        info_win = getattr(self, "info_window", None)  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
         if info_win is not None:
             try:
-                if info_win.winfo_exists() and not _is_popup_child(clicked, info_win):
-                    info_win.destroy()
+                if info_win.winfo_exists() and not _is_popup_child(clicked, info_win):  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    info_win.destroy()  # 창 또는 위젯을 완전히 제거
             except Exception:
                 pass
 
-        # 노선 검색 팝업 닫기
-        srch_win = getattr(self, "_srch_win", None)
+        srch_win = getattr(self, "_srch_win", None)  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
         if srch_win is not None:
             try:
-                if srch_win.winfo_exists() and not _is_popup_child(clicked, srch_win):
-                    srch_win.destroy()
+                if srch_win.winfo_exists() and not _is_popup_child(clicked, srch_win):  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    srch_win.destroy()  # 창 또는 위젯을 완전히 제거
             except Exception:
                 pass
 
-        # 인증키 입력 팝업 닫기
-        key_win = getattr(self, "_key_win", None)
+        key_win = getattr(self, "_key_win", None)  # 객체에서 속성 값 가져오기 (없으면 기본값 반환)
         if key_win is not None:
             try:
-                if key_win.winfo_exists() and not _is_popup_child(clicked, key_win):
-                    key_win.destroy()
+                if key_win.winfo_exists() and not _is_popup_child(clicked, key_win):  # 창(widget)이 아직 화면에 존재하면 True, 닫혔으면 False
+                    key_win.destroy()  # 창 또는 위젯을 완전히 제거
             except Exception:
                 pass
 
     def _on_close(self):
-        """창 닫기: 종료 확인 후 미저장 기록이 있으면 엑셀에 저장하고 종료합니다."""
-        if not messagebox.askyesno("종료 확인", "프로그램을 종료하시겠습니까?"):
-            return
-        self.is_monitoring = False
+        """3-35. 창 닫기(X 버튼) 처리.
+        종료 확인 후 루프를 중단하고, 미저장 기록을 엑셀에 저장합니다.
+        """
+        if not messagebox.askyesno("종료 확인", "프로그램을 종료하시겠습니까?"):  # [예/아니오] 확인 대화상자 → True(예) 또는 False(아니오) 반환
+            return   # 취소 클릭 시 아무것도 하지 않습니다
+        self.is_monitoring = False   # False로 설정하면 main_loop가 0.1초 안에 탈출합니다
+        # 마지막 저장 이후 새 기록이 추가됐으면 최종 저장합니다.
         if (self.recorded_data and self.auto_save_path and self.can_auto_save
-                and len(self.recorded_data) > self._saved_record_count):
+                and len(self.recorded_data) > self._saved_record_count):  # 미저장 데이터 있으면
             self.perform_auto_save()
-        self.root.destroy()
-
+        self.root.destroy()   # tkinter 창과 이벤트 루프를 종료합니다
 
 # ============================================================
-# 3. 프로그램 시작
+# 4. 프로그램 시작
+# ─────────────────────────────────────────────────────────────
+# 1) tkinter 루트 창 생성 및 크기 지정
+# 2) DJBusRecorder(root) 인스턴스 생성
+#    → setup_ui() : UI 레이아웃 구성
+#    → init_routes() : 즐겨찾기 노선 복원 (메인 스레드에서 직접 실행)
+# 3) root.mainloop() : tkinter 이벤트 루프 진입
+# 4) 예외 발생 시 errorlog.txt에 기록하고 종료합니다.
 # ============================================================
 
-if __name__ == "__main__":
-    # 예외 발생 시 errorlog.txt에 기록하고 종료합니다.
+if __name__ == "__main__":  # 이 파일을 직접 실행했을 때만 동작 (import 시 실행 안 됨)
     try:
-        root = tk.Tk()
-        root.geometry("1350x1000")  # 초기 창 크기 (너비×높이)
+        root = tk.Tk()  # tkinter 루트 창 생성 (프로그램의 메인 윈도우)
+        root.geometry("1350x1000")  # 창 초기 크기·위치 설정 ("너비x높이+X+Y" 형식)
         app  = DJBusRecorder(root)
-        root.mainloop()
+        root.mainloop()  # tkinter 이벤트 루프 시작 — 사용자 입력을 기다리며 화면을 유지
     except Exception as e:
         with open("errorlog.txt", "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now()}] {e}\n")
+            f.write(f"[{datetime.now()}] {e}\n")  # 현재 날짜+시각을 datetime 객체로 반환
