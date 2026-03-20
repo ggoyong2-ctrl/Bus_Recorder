@@ -3,7 +3,7 @@
 <br>
 
 > [!CAUTION]
-> **<ins>주의 : 이 프로그램을 사용하기 위해서는 반드시 공공데이터포털 OPEN API 사용신청을 해야합니다.</ins>**
+> **<ins>주의 : 이 프로그램을 사용하기 위해서는 반드시 공공데이터포털</ins> (https://www.data.go.kr) <ins>OPEN API 사용신청을 해야합니다.</ins>**
 <br>
 
 ---
