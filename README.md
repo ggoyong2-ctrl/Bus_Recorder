@@ -19,7 +19,7 @@ xattr -d com.apple.quarantine /app_file 경로
 ```
 **(2) 맥os operation not permitted 에러 해결**
 시스템설정 ➔ 개인정보 보호 및 보안 ➔ 전체 디스크 접근 권한 ➔ +버튼 클릭 ➔ Seoul_Bus_Drive_Recorder_v1.09.app 적용
-<br>
+<br><br>
 
 ## 📖 사용 방법
 
@@ -34,7 +34,7 @@ xattr -d com.apple.quarantine /app_file 경로
 **5.** 📊 실행 파일이 위치한 경로에 저장된 **엑셀 파일을 확인 및 사용**합니다.
 
 **6.** ⏻ 프로그램을 종료하면 **모든 작동 및 데이터 기록이** <ins>**중단**</ins>됩니다.
-<br>
+<br><br>
 
 ## 👨‍💻 소스 코드 및 일러두기
 
@@ -141,7 +141,7 @@ http://ws.bus.go.kr/api/rest/buspos/getBusPosByRouteSt?ServiceKey=[ 인증키 ]&
 
 ## 📊 저장되는 엑셀 데이터 예시
 <img width="947" height="1392" alt="2026-03-26 10 02 58" src="https://github.com/user-attachments/assets/5a48dd50-391c-4e3e-a524-c0f55fc3e0b1" />
-<br>
+<br><br>
 
 ## 💻 윈도우11 작동 스크린샷
 <img width="1352" height="1032" alt="2026-03-26 08 21 47" src="https://github.com/user-attachments/assets/1e483ffd-b6f0-4f4c-9a85-ec75bee07af0" />
@@ -149,7 +149,7 @@ http://ws.bus.go.kr/api/rest/buspos/getBusPosByRouteSt?ServiceKey=[ 인증키 ]&
 <img width="1352" height="1032" alt="2026-03-26 08 22 23" src="https://github.com/user-attachments/assets/bf137721-60e8-4005-9010-4fc9ba8489c4" />
 <img width="1352" height="1032" alt="2026-03-26 08 22 40" src="https://github.com/user-attachments/assets/6341062f-408d-46ca-aefa-b6ff25ccd3c2" />
 <img width="1352" height="1032" alt="2026-03-26 08 22 59" src="https://github.com/user-attachments/assets/4c8d1ddb-963c-401c-a21a-2907d118226c" />
-<br>
+<br><br>
 
 ## 💻 macOS 작동 스크린샷
 <img width="1353" height="876" alt="2026-03-26 08 20 11" src="https://github.com/user-attachments/assets/913a4190-556a-426b-af2e-01eec9144e8c" />
