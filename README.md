@@ -7,8 +7,8 @@
 
 ## 📥 다운로드 및 설치
 
-* 💻 **Windows :** [ZIP 파일 다운로드 (v1.15)](https://github.com/ggoyong2-ctrl/Bus_Recorder/releases/download/Downloads/Seoul_Bus_Drive_Recorder_v1_15.zip)
-* 🍎 **macOS :** [ZIP 파일 다운로드 (v1.15)](https://github.com/ggoyong2-ctrl/Bus_Recorder/releases/download/Downloads/Seoul_Bus_Drive_Recorder_v1_15.macOS.zip)
+* 💻 **Windows :** [ZIP 파일 다운로드 (v1.16)](https://github.com/ggoyong2-ctrl/Bus_Recorder/releases/download/Downloads/Seoul_Bus_Drive_Recorder_v1_16.zip)
+* 🍎 **macOS :** [ZIP 파일 다운로드 (v1.16)](https://github.com/ggoyong2-ctrl/Bus_Recorder/releases/download/Downloads/Seoul_Bus_Drive_Recorder_v1_16.macOS.zip)
 #### 🛠️ macOS 사용자 필수 설정 안내
 macOS 환경에서는 보안 설정(Gatekeeper)으로 인해 앱 실행 시 권한 허용이 필요합니다. 아래 두 가지 단계를 꼭 진행해 주세요.
 
@@ -38,7 +38,7 @@ xattr -d com.apple.quarantine /app_file 경로
 
 ## 👨‍💻 소스 코드 및 일러두기
 
-* 🐍 **파이썬 코드 :** Seoul_Bus_Drive_Recorder_v1_15.py [소스코드 보러가기](https://github.com/ggoyong2-ctrl/Bus_Recorder/blob/main/Seoul_Bus_Drive_Recorder_v1_15.py)
+* 🐍 **파이썬 코드 :** Seoul_Bus_Drive_Recorder_v1_16.py [소스코드 보러가기](https://github.com/ggoyong2-ctrl/Bus_Recorder/blob/main/Seoul_Bus_Drive_Recorder_v1_16.py)
 > 💡 **개발자 코멘트**
 > 
 > 저는 프로그래밍 전문가가 아니라, 평범한 시내버스 운전직 노동자입니다. 현업에서 필요성을 느껴 Claude와 Gemini AI의 도움을 받아 작성한 코드이기에, 얼마든지 오류나 버그가 존재할 수 있습니다. **<ins>자유롭게 본인의 필요에 맞게 이 코드를 수정해서 쓰셔도 됩니다.</ins>** 여러분의 업무에 작은 도움이라도 되기를 바랍니다!
