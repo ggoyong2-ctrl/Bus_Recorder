@@ -1,5 +1,5 @@
 # ============================================================
-# Seoul_Bus_Drive_Recorder v1.16
+# Seoul_Bus_Drive_Recorder v1.17
 #
 # 【프로그램 설명】
 #   서울시 공공데이터 API를 이용하여 특정 버스 노선의
@@ -77,6 +77,12 @@
 #      ├─ 【6-20】 fetch_api()       ★     서울시 버스 API 공통 호출
 #      ├─ 【6-21】 _fetch_first_time()     첫차 시각 조회
 #      ├─ 【6-22】 _ask_interval()         갱신 주기 입력 대화상자
+#      ├─ 【6-22-A】 _on_schedule_toggle()   예약 버튼 4가지 분기 처리
+#      ├─ 【6-22-B】 _ask_scheduled_start()  기록 시작 예약 시각 입력 창
+#      ├─ 【6-22-C】 _register_schedule_timer()   시작 예약 폴링 타이머
+#      ├─ 【6-22-D】 _ask_scheduled_stop()   기록 중지 예약 시각 입력 창
+#      ├─ 【6-22-E】 _register_stop_schedule_timer() 중지 예약 폴링 타이머
+#      ├─ 【6-22-F】 _stop_monitoring_silent()  예약 자동 중지 (확인창 없음)
 #      ├─ 【6-23】 _show_api_status()      API 호출 현황 대화상자
 #      ├─ 【6-24】 _show_program_info()    프로그램 정보 대화상자
 #      ├─ 【6-25】 _on_toggle()            기록 시작/중지 토글
@@ -99,7 +105,7 @@
 # 【7】 프로그램 진입점 (if __name__ == "__main__")
 # ══════════════════════════════════════════════════════════
 # ============================================================
-# Seoul_Bus_Drive_Recorder_v1.16
+# Seoul_Bus_Drive_Recorder_v1.17
 # ============================================================
 
 # ══════════════════════════════════════════════════════════
@@ -1368,7 +1374,7 @@ class SeoulBusRecorder(QMainWindow):
 # ──────────────────────────────────────────────────────────
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("서울시내버스 노선 운행기록 수집 프로그램 v1.16")
+        self.setWindowTitle("서울시내버스 노선 운행기록 수집 프로그램 v1.17")
         self.setMinimumSize(800, 500)
         self.resize(1350, 1000)
         try:
@@ -1417,6 +1423,8 @@ class SeoulBusRecorder(QMainWindow):
         self.route_map_current = None
         self._schedule_timer = None   # 예약 기록 시작: 1초 폴링 QTimer
         self._scheduled_dt = None     # 예약 기록 시작: 목표 datetime
+        self._stop_schedule_timer = None  # 예약 기록 중지: 1초 폴링 QTimer
+        self._stop_scheduled_dt = None    # 예약 기록 중지: 목표 datetime
 
         self.sig_log.connect(self._slot_log)
         self.sig_record.connect(self._slot_record)
@@ -2146,9 +2154,15 @@ class SeoulBusRecorder(QMainWindow):
         btn_fav_add.clicked.connect(_add_fav)
         btn_fav_del.clicked.connect(_del_fav)
 
+        _loading = [False]  # 중복 실행 방지 플래그
+
         def _do_load():
+            if _loading[0]:
+                return
+            _loading[0] = True
             cur = _get_selected()
             if not cur:
+                _loading[0] = False
                 return
             rid = cur.data(0, Qt.UserRole)
             rdata = cur.data(0, Qt.UserRole + 1)
@@ -2159,13 +2173,11 @@ class SeoulBusRecorder(QMainWindow):
             def _load_run():
                 self._load_route_from_search(rid, rname, rtype, dlg)
             threading.Thread(target=_load_run, daemon=True).start()
+            QTimer.singleShot(1500, lambda: _loading.__setitem__(0, False))
 
         btn_load.clicked.connect(_do_load)
         btn_search.clicked.connect(_do_search)
         edt.returnPressed.connect(_do_search)
-
-        tree.itemDoubleClicked.connect(lambda item, col: _do_load())
-        fav_tree.itemDoubleClicked.connect(lambda item, col: _do_load())
 
         tree.itemActivated.connect(lambda item, col: _do_load())
         fav_tree.itemActivated.connect(lambda item, col: _do_load())
@@ -2447,28 +2459,40 @@ class SeoulBusRecorder(QMainWindow):
 
     def _on_schedule_toggle(self):
 # ──────────────────────────────────────────────────────────
-# 【추가】 _on_schedule_toggle()
-#   메뉴 [예약 기록 시작] 클릭 시 호출.
-#   ① 예약이 이미 설정된 상태라면 → 예약 취소 후 메뉴 원복
-#   ② 현재 기록 중이라면 → 경고 메시지 출력 후 리턴
-#   ③ 노선이 하나도 추가되지 않았다면 → 경고 메시지 출력 후 리턴
-#   ④ 그 외 → _ask_scheduled_start() 대화상자 열기
+# 【6-22-A】 _on_schedule_toggle()
+#   act_schedule 버튼 클릭 시 호출. 현재 상태에 따라 4가지로 분기:
+#
+#   ① 시작 예약 대기 중  → 시작 예약 취소
+#   ② 기록 중 + 중지 예약 대기 중 → 중지 예약 취소
+#   ③ 기록 중 + 중지 미예약  → 중지 시각 입력 창 (_ask_scheduled_stop)
+#   ④ 대기 중 (기본 상태) → 시작 시각 입력 창 (_ask_scheduled_start)
 # ──────────────────────────────────────────────────────────
+        # ① 시작 예약 대기 중 → 취소
         if self._schedule_timer is not None:
             self._schedule_timer.stop()
             self._schedule_timer = None
             self._scheduled_dt = None
             self.act_schedule.setText("예약 기록 시작")
-            self.log("⏰ 예약이 취소되었습니다.")
+            self.log("⏰ 시작 예약이 취소되었습니다.")
             return
+        # ② 기록 중 + 중지 예약 대기 중 → 중지 예약 취소
+        if self.is_monitoring and self._stop_schedule_timer is not None:
+            self._stop_schedule_timer.stop()
+            self._stop_schedule_timer = None
+            self._stop_scheduled_dt = None
+            self.act_schedule.setText("예약 기록 중지")
+            self.log("⏰ 중지 예약이 취소되었습니다.")
+            return
+        # ③ 기록 중 + 중지 미예약 → 중지 시각 입력 창
         if self.is_monitoring:
-            QMessageBox.warning(self, "알림", "이미 기록이 진행 중입니다.")
+            self._ask_scheduled_stop()
             return
+        # ④ 대기 중 → 시작 시각 입력 창
         self._ask_scheduled_start()
 
     def _ask_scheduled_start(self):
 # ──────────────────────────────────────────────────────────
-# 【추가】 _ask_scheduled_start()
+# 【6-22-B】 _ask_scheduled_start()
 #   기록을 시작할 예약 시각(년·월·일·시·분)을 입력 받는 대화상자.
 #   갱신주기 입력 대화상자(_ask_interval)와 동일한 스타일.
 #
@@ -2547,7 +2571,7 @@ class SeoulBusRecorder(QMainWindow):
 
     def _register_schedule_timer(self):
 # ──────────────────────────────────────────────────────────
-# 【추가】 _register_schedule_timer()
+# 【6-22-C】 _register_schedule_timer()
 #   예약 시각을 1초 간격으로 감시하는 QTimer를 시작.
 #   목표 시각(self._scheduled_dt)에 도달하면:
 #   ① 타이머 중지 및 예약 변수 초기화
@@ -2566,16 +2590,138 @@ class SeoulBusRecorder(QMainWindow):
                 t.stop()
                 self._schedule_timer = None
                 self._scheduled_dt = None
-                self.act_schedule.setText("예약 기록 시작")
                 if not self.is_monitoring:
+                    self.act_schedule.setText("예약 기록 시작")
                     self.log("⏰ 예약 시각이 되었습니다. 기록을 시작합니다.")
                     self._start_monitoring()
                 else:
-                    self.log("⏰ 예약 시각이 되었으나 이미 기록 중이므로 예약을 해제합니다.")
+                    self.act_schedule.setText("예약 기록 중지")
+                    self.log("⏰ 예약 시각이 되었으나 이미 기록 중이므로 시작 예약을 해제합니다.")
 
         t.timeout.connect(_check)
         t.start()
         self._schedule_timer = t
+
+    def _ask_scheduled_stop(self):
+# ──────────────────────────────────────────────────────────
+# 【6-22-D】 _ask_scheduled_stop()
+#   기록을 중지할 예약 시각(년·월·일·시·분)을 입력 받는 대화상자.
+#   _ask_scheduled_start() 와 동일한 UI 구조.
+#
+#   검증 규칙:
+#   - 숫자 이외 입력 또는 유효하지 않은 날짜이면 경고
+#   - 현재 시각 이전이면 경고
+#
+#   OK 확인 후:
+#   - self._stop_scheduled_dt 에 목표 datetime 저장
+#   - _register_stop_schedule_timer() 호출 → 1초 폴링 타이머 시작
+#   - 메뉴 텍스트를 "예약 중지 취소 (YYYY-MM-DD HH:MM 예약됨)"으로 변경
+#   - 로그에 예약 시각 기록
+# ──────────────────────────────────────────────────────────
+        now = datetime.now()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("예약 기록 중지")
+        dlg.setFixedSize(340, 200)
+        lo = QVBoxLayout(dlg)
+
+        lo.addWidget(QLabel(f"현재 시각: {now.strftime('%Y-%m-%d %H:%M')}"))
+        lo.addWidget(QLabel("기록을 중지할 시각을 입력하세요:"))
+
+        row = QHBoxLayout()
+        ed_year  = QLineEdit(str(now.year))
+        ed_month = QLineEdit(f"{now.month:02d}")
+        ed_day   = QLineEdit(f"{now.day:02d}")
+        ed_hour  = QLineEdit(f"{now.hour:02d}")
+        ed_min   = QLineEdit(f"{now.minute:02d}")
+        for ed in [ed_year, ed_month, ed_day, ed_hour, ed_min]:
+            ed.setAlignment(Qt.AlignCenter)
+        ed_year.setFixedWidth(52)
+        ed_month.setFixedWidth(32)
+        ed_day.setFixedWidth(32)
+        ed_hour.setFixedWidth(32)
+        ed_min.setFixedWidth(32)
+        row.addWidget(ed_year);  row.addWidget(QLabel("년"))
+        row.addWidget(ed_month); row.addWidget(QLabel("월"))
+        row.addWidget(ed_day);   row.addWidget(QLabel("일"))
+        row.addWidget(ed_hour);  row.addWidget(QLabel("시"))
+        row.addWidget(ed_min);   row.addWidget(QLabel("분"))
+        row.addStretch()
+        lo.addLayout(row)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        lo.addWidget(bb)
+
+        def ok():
+            try:
+                y  = int(ed_year.text())
+                mo = int(ed_month.text())
+                d  = int(ed_day.text())
+                h  = int(ed_hour.text())
+                mi = int(ed_min.text())
+                target = datetime(y, mo, d, h, mi, 0)
+            except ValueError:
+                QMessageBox.warning(dlg, "알림", "올바른 날짜/시간을 입력해주세요.")
+                return
+            if target <= datetime.now():
+                QMessageBox.warning(dlg, "알림", "현재 시각 이후로 설정해야 합니다.")
+                return
+            self._stop_scheduled_dt = target
+            dlg.accept()
+            self._register_stop_schedule_timer()
+            ts = target.strftime('%Y-%m-%d %H:%M')
+            self.act_schedule.setText(f"예약 중지 취소 ({ts} 예약됨)")
+            self.log(f"⏰ 중지 예약 완료 — {ts} 에 자동으로 기록을 중지합니다.")
+
+        bb.accepted.connect(ok)
+        bb.rejected.connect(dlg.reject)
+        dlg.exec()
+
+    def _register_stop_schedule_timer(self):
+# ──────────────────────────────────────────────────────────
+# 【6-22-E】 _register_stop_schedule_timer()
+#   중지 예약 시각을 1초 간격으로 감시하는 QTimer를 시작.
+#   목표 시각(self._stop_scheduled_dt)에 도달하면:
+#   ① 타이머 중지 및 예약 변수 초기화
+#   ② 아직 기록 중일 때만 _stop_monitoring_silent() 호출
+#      (사용자가 수동으로 먼저 중지한 경우 중복 실행 방지)
+# ──────────────────────────────────────────────────────────
+        t = QTimer(self)
+        t.setInterval(1000)
+
+        def _check():
+            if self._stop_scheduled_dt is None:
+                t.stop()
+                return
+            if datetime.now() >= self._stop_scheduled_dt:
+                t.stop()
+                self._stop_schedule_timer = None
+                self._stop_scheduled_dt = None
+                if self.is_monitoring:
+                    self.log("⏰ 예약 시각이 되었습니다. 기록을 중지합니다.")
+                    self._stop_monitoring_silent()
+                else:
+                    self.act_schedule.setText("예약 기록 시작")
+                    self.log("⏰ 예약 시각이 되었으나 이미 기록이 중지되어 중지 예약을 해제합니다.")
+
+        t.timeout.connect(_check)
+        t.start()
+        self._stop_schedule_timer = t
+
+    def _stop_monitoring_silent(self):
+# ──────────────────────────────────────────────────────────
+# 【6-22-F】 _stop_monitoring_silent()
+#   예약 중지 시각 도달 시 확인 다이얼로그 없이 자동으로 기록을 중지.
+#   _stop_monitoring() 과 동일한 처리를 하되 QMessageBox 생략.
+# ──────────────────────────────────────────────────────────
+        self.is_monitoring = False
+        self.act_toggle.setText("기록 시작")
+        self.act_schedule.setText("예약 기록 시작")
+        self.act_search.setEnabled(True)
+        for p in self.route_map_panels.values():
+            p.pause_tick()
+        if self.recorded_data and self.auto_save_path and self.can_auto_save and len(self.recorded_data) > self._saved_record_count:
+            self._perform_auto_save()
+        self.log("■ 예약 중지 — 자동 기록을 중지합니다.")
 
 # ──────────────────────────────────────────────────────────
 # 【6-23】 _show_api_status()  ← 첫 번째 정의 (줄 2078의 두 번째 정의로 덮어씌워짐)
@@ -2630,7 +2776,7 @@ class SeoulBusRecorder(QMainWindow):
         dlg.setMinimumSize(400, 400)
         lo = QVBoxLayout(dlg)
         lc = QApplication.palette().color(QPalette.Link).name()
-        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.16</p>'
+        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.17</p>'
               f'<p>이 프로그램은 Python + PySide6로 작성하고,<br>'
               f'공공누리 제1유형으로 개방한 공공데이터 API 서비스를 이용하였으며,<br>'
               f'API 서비스는 아래의 페이지에서 무료로 이용할 수 있습니다.</p>'
@@ -2696,6 +2842,7 @@ class SeoulBusRecorder(QMainWindow):
             return
         self.is_monitoring = True
         self.act_toggle.setText("기록 중지")
+        self.act_schedule.setText("예약 기록 중지")
         self.act_search.setEnabled(False)
         for p in self.route_map_panels.values():
             p.resume_tick()
@@ -2705,8 +2852,14 @@ class SeoulBusRecorder(QMainWindow):
     def _stop_monitoring(self):
         if QMessageBox.question(self, "중지 확인", "정말 기록을 중지하시겠습니까?") != QMessageBox.Yes:
             return
+        # 중지 예약이 걸려 있으면 함께 해제
+        if self._stop_schedule_timer is not None:
+            self._stop_schedule_timer.stop()
+            self._stop_schedule_timer = None
+            self._stop_scheduled_dt = None
         self.is_monitoring = False
         self.act_toggle.setText("기록 시작")
+        self.act_schedule.setText("예약 기록 시작")
         self.act_search.setEnabled(True)
         for p in self.route_map_panels.values():
             p.pause_tick()
@@ -3126,7 +3279,7 @@ class SeoulBusRecorder(QMainWindow):
         dlg.setMinimumSize(400, 400)
         lo = QVBoxLayout(dlg)
         lc = QApplication.palette().color(QPalette.Link).name()
-        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.16</p>'
+        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.17</p>'
               f'<p>이 프로그램은 Python + PySide6로 작성하고,<br>'
               f'공공누리 제1유형으로 개방한 공공데이터 API 서비스를 이용하였으며,<br>'
               f'API 서비스는 아래의 페이지에서 무료로 이용할 수 있습니다.</p>'
