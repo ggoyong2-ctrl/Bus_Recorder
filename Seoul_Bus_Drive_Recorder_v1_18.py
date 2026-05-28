@@ -1,5 +1,5 @@
 # ============================================================
-# Seoul_Bus_Drive_Recorder v1.17
+# Seoul_Bus_Drive_Recorder v1.18
 #
 # 【프로그램 설명】
 #   서울시 공공데이터 API를 이용하여 특정 버스 노선의
@@ -17,7 +17,7 @@
 #      ├─ 【2-3】 API URL 상수 (URL_POS1 ~ URL_SRCH)
 #      ├─ 【2-4】 노선 종류 이름표·색상표 (ROUTE_TYPE_LABEL, ROUTE_TYPE_COLOR)
 #      └─ 【2-5】 지도 그리기 크기/위치 상수 (CELL_W, CELL_H, PAD_X 등)
-# 【3】 유틸리티 함수
+# 【3】 유틸리티 함수 및 클래스
 #      ├─ 【3-1】  _make_palette()         라이트/다크 색상 팔레트 생성
 #      ├─ 【3-2】  darken_color()          색상 어둡게 조정
 #      ├─ 【3-3】  truncate_name()         긴 정류소 이름 줄임표 처리
@@ -31,7 +31,8 @@
 #      ├─ 【3-11】 get_text_color()        글자색 반환
 #      ├─ 【3-12】 get_base_color()        표 배경색 반환
 #      ├─ 【3-13】 get_header_bg_color()   표 헤더 배경색 반환
-#      └─ 【3-14】 detect_os_dark_mode()   OS 다크모드 감지
+#      ├─ 【3-14】 detect_os_dark_mode()   OS 다크모드 감지
+#      └─ 【3-15】 ElidedLabel             말줄임 처리 레이블 (로그 헤더 파일 경로용)
 # 【4】 RouteMapPanel 클래스 (노선 지도 패널 위젯)
 #      ├─ 【4-1】  __init__()              초기화·위젯 구성·타이머 설정
 #      ├─ 【4-2】  set_sect_speeds()       구간 속도 데이터 저장
@@ -83,11 +84,14 @@
 #      ├─ 【6-22-D】 _ask_scheduled_stop()   기록 중지 예약 시각 입력 창
 #      ├─ 【6-22-E】 _register_stop_schedule_timer() 중지 예약 폴링 타이머
 #      ├─ 【6-22-F】 _stop_monitoring_silent()  예약 자동 중지 (확인창 없음)
+#      ├─ 【6-22-G】 _open_save_file()          기록 파일 바로 열기
+#      ├─ 【6-22-H】 _open_save_folder()        기록 파일 폴더 열기
 #      ├─ 【6-23】 _show_api_status()      API 호출 현황 대화상자
 #      ├─ 【6-24】 _show_program_info()    프로그램 정보 대화상자
-#      ├─ 【6-25】 _on_toggle()            기록 시작/중지 토글
-#      ├─ 【6-26】 _start_monitoring()     모니터링 시작
-#      ├─ 【6-27】 _stop_monitoring()      모니터링 중지
+#      ├─ 【6-25】 _on_toggle()            기록 시작/중지 토글 (예약·이전기록 팝업 포함)
+#      ├─ 【6-26】 _start_monitoring()     모니터링 시작 (중복 실행 가드 포함)
+#      ├─ 【6-26-A】 _clear_recorded_data()  기록창·recorded_data 초기화
+#      ├─ 【6-27】 _stop_monitoring()      모니터링 중지 (중지예약 팝업 분기 포함)
 #      ├─ 【6-28】 _main_loop()            백그라운드 갱신 루프 스레드
 #      ├─ 【6-29】 _refresh_data()         한 번의 데이터 갱신 실행
 #      ├─ 【6-30】 _process_routes()  ★    버스 위치 분석·운행 판정 핵심
@@ -105,15 +109,15 @@
 # 【7】 프로그램 진입점 (if __name__ == "__main__")
 # ══════════════════════════════════════════════════════════
 # ============================================================
-# Seoul_Bus_Drive_Recorder_v1.17
+# Seoul_Bus_Drive_Recorder_v1.18
 # ============================================================
 
 # ══════════════════════════════════════════════════════════
 # 【1-1】 파이썬 기본 라이브러리
 #   파이썬 설치 시 기본 포함 - 별도 설치 불필요
 # ══════════════════════════════════════════════════════════
-import sys
-# sys        : 파이썬 인터프리터 제어 (sys.exit 강제 종료, sys.platform OS 판별 등)
+import subprocess
+import sys# sys        : 파이썬 인터프리터 제어 (sys.exit 강제 종료, sys.platform OS 판별 등)
 import os
 # os         : 운영체제 인터페이스 (파일 경로 조작, 파일 존재 확인, 디렉터리 등)
 import time
@@ -196,7 +200,7 @@ from urllib.parse import unquote
 #   QPalette : 위젯 전체 색상 팔레트 (배경·글자·버튼·강조색 일괄 설정).
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QLabel, QPushButton,
+    QSplitter, QLabel, QPushButton, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QPlainTextEdit,
     QDialog, QDialogButtonBox, QLineEdit, QMessageBox,
     QGraphicsView, QGraphicsScene,
@@ -567,7 +571,49 @@ def detect_os_dark_mode():
     return False
 
 # ══════════════════════════════════════════════════════════
-# 【4】 RouteMapPanel 클래스
+# 【3-15】 ElidedLabel — 말줄임 처리 QLabel
+#   창 너비가 좁아질 때 텍스트를 "…"으로 축소하는 레이블.
+#   로그 헤더의 기록 파일 경로 표시에 사용.
+#   크기 정책: Preferred — sizeHint()로 전체 경로 너비를 레이아웃에 요청.
+#   공간이 충분하면 전체 경로를 표시하고, 창이 좁아지면 ElideMiddle(경로 중간 줄임)로 압축.
+#   minimumSizeHint()를 0으로 반환해 최소한까지 압축 허용.
+# ══════════════════════════════════════════════════════════
+class ElidedLabel(QLabel):
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
+
+    def sizeHint(self):
+        # 레이아웃에 전체 경로 너비를 요청 → 공간이 충분하면 전체 경로 표시
+        hint = super().sizeHint()
+        hint.setWidth(self.fontMetrics().horizontalAdvance(self._full_text))
+        return hint
+
+    def minimumSizeHint(self):
+        # 최소 너비 0 → 창이 좁아지면 줄임표로 압축 허용
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
+
+    def set_full_text(self, text):
+        self._full_text = text
+        self.updateGeometry()   # 레이아웃에 sizeHint 재계산 요청
+        self._update_elided()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_elided()
+
+    def _update_elided(self):
+        fm = self.fontMetrics()
+        elided = fm.elidedText(self._full_text, Qt.ElideMiddle, self.width())
+        super().setText(elided)
+        self.setToolTip(self._full_text)
+
+# ══════════════════════════════════════════════════════════
+# 【4】 RouteMapPanel 클래스 (노선 지도 패널 위젯)
 #   버스 노선의 정류소를 그래픽으로 표시하고
 #   운행 중인 버스 아이콘을 실시간 갱신하는 패널 위젯.
 #
@@ -1374,7 +1420,7 @@ class SeoulBusRecorder(QMainWindow):
 # ──────────────────────────────────────────────────────────
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("서울시내버스 노선 운행기록 수집 프로그램 v1.17")
+        self.setWindowTitle("서울시내버스 노선 운행기록 수집 프로그램 v1.18")
         self.setMinimumSize(800, 500)
         self.resize(1350, 1000)
         try:
@@ -1546,10 +1592,34 @@ class SeoulBusRecorder(QMainWindow):
 
         log_header = QHBoxLayout()
         log_header.setContentsMargins(6, 0, 6, 0)
+        log_header.setSpacing(4)
         log_title_btn = QLabel("  로그  ")
         log_title_btn.setFont(QFont(FONT_FAMILY, 9, QFont.Bold))
         log_header.addWidget(log_title_btn)
-        log_header.addStretch()
+        log_header.addStretch(1)
+        # ── 기록 파일 경로 표시 (기록 중일 때만 보임) ──────────────
+        self._log_file_prefix = QLabel("현재 기록 중인 파일 :")
+        self._log_file_prefix.setFont(QFont(FONT_FAMILY, 8))
+        self._log_file_prefix.setVisible(False)
+        log_header.addWidget(self._log_file_prefix)
+        self._log_file_label = ElidedLabel("")
+        self._log_file_label.setFont(QFont(FONT_FAMILY, 8))
+        self._log_file_label.setVisible(False)
+        log_header.addWidget(self._log_file_label)
+        self._btn_open_file = QPushButton("파일열기")
+        self._btn_open_file.setFixedHeight(16)
+        self._btn_open_file.setFont(QFont(FONT_FAMILY, 7))
+        self._btn_open_file.setVisible(False)
+        self._btn_open_file.clicked.connect(self._open_save_file)
+        log_header.addWidget(self._btn_open_file)
+        self._btn_open_folder = QPushButton("폴더열기")
+        self._btn_open_folder.setFixedHeight(16)
+        self._btn_open_folder.setFont(QFont(FONT_FAMILY, 7))
+        self._btn_open_folder.setVisible(False)
+        self._btn_open_folder.clicked.connect(self._open_save_folder)
+        log_header.addWidget(self._btn_open_folder)
+        log_header.addSpacing(8)
+        # ────────────────────────────────────────────────────────────
         self._log_toggle_btn = QPushButton("접기")
         self._log_toggle_btn.setFixedSize(45, 16)
         self._log_toggle_btn.setFont(QFont(FONT_FAMILY, 7))
@@ -1584,6 +1654,46 @@ class SeoulBusRecorder(QMainWindow):
 #   펼치기: log_text를 보여주고, 이전 저장 높이로 복원.
 #   outer_splitter.setSizes([위 크기, 아래 크기])로 영역 재배분.
 # ──────────────────────────────────────────────────────────
+    def _open_save_file(self):
+# ──────────────────────────────────────────────────────────
+# 【6-22-G】 _open_save_file()
+#   로그 헤더 [파일열기] 버튼 클릭 시 호출.
+#   현재 기록 중인 엑셀 파일을 기본 연결 프로그램(Excel 등)으로 바로 열기.
+#   Windows: os.startfile / macOS: open 명령 / Linux: xdg-open
+# ──────────────────────────────────────────────────────────
+        if not self.auto_save_path or not os.path.exists(self.auto_save_path):
+            QMessageBox.warning(self, "알림", "파일을 찾을 수 없습니다.")
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(self.auto_save_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", self.auto_save_path])
+            else:
+                subprocess.Popen(["xdg-open", self.auto_save_path])
+        except Exception as e:
+            QMessageBox.warning(self, "오류", f"파일 열기 실패: {e}")
+
+    def _open_save_folder(self):
+# ──────────────────────────────────────────────────────────
+# 【6-22-H】 _open_save_folder()
+#   로그 헤더 [폴더열기] 버튼 클릭 시 호출.
+#   현재 기록 중인 엑셀 파일이 있는 폴더를 탐색기로 열고 파일을 선택 상태로 표시.
+#   Windows: explorer /select / macOS: open -R / Linux: xdg-open (폴더)
+# ──────────────────────────────────────────────────────────
+        if not self.auto_save_path:
+            QMessageBox.warning(self, "알림", "파일 경로를 확인할 수 없습니다.")
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", "/select,", self.auto_save_path])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", self.auto_save_path])
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(self.auto_save_path)])
+        except Exception as e:
+            QMessageBox.warning(self, "오류", f"폴더 열기 실패: {e}")
+
     def _toggle_log_panel(self):
         if self._log_expanded:
             sizes = self._outer_splitter.sizes()
@@ -2558,6 +2668,14 @@ class SeoulBusRecorder(QMainWindow):
             if target <= datetime.now():
                 QMessageBox.warning(dlg, "알림", "현재 시각 이후로 설정해야 합니다.")
                 return
+            # 이전 기록이 있으면 확인 팝업 (예약 시각 도달 시 자동 초기화됨을 안내)
+            if self.recorded_data:
+                ret = QMessageBox.question(
+                    dlg, "이전 기록 있음",
+                    "이전 기록이 있습니다.\n기록을 새로 시작하면 화면의 이전 기록이 지워지고,\n새로운 파일에 기록됩니다.\n(저장된 엑셀 파일은 유지됩니다)",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if ret != QMessageBox.Yes:
+                    return
             self._scheduled_dt = target
             dlg.accept()
             self._register_schedule_timer()
@@ -2592,6 +2710,8 @@ class SeoulBusRecorder(QMainWindow):
                 self._scheduled_dt = None
                 if not self.is_monitoring:
                     self.act_schedule.setText("예약 기록 시작")
+                    if self.recorded_data:
+                        self._clear_recorded_data()
                     self.log("⏰ 예약 시각이 되었습니다. 기록을 시작합니다.")
                     self._start_monitoring()
                 else:
@@ -2717,6 +2837,10 @@ class SeoulBusRecorder(QMainWindow):
         self.act_toggle.setText("기록 시작")
         self.act_schedule.setText("예약 기록 시작")
         self.act_search.setEnabled(True)
+        self._log_file_prefix.setVisible(False)
+        self._log_file_label.setVisible(False)
+        self._btn_open_file.setVisible(False)
+        self._btn_open_folder.setVisible(False)
         for p in self.route_map_panels.values():
             p.pause_tick()
         if self.recorded_data and self.auto_save_path and self.can_auto_save and len(self.recorded_data) > self._saved_record_count:
@@ -2776,7 +2900,7 @@ class SeoulBusRecorder(QMainWindow):
         dlg.setMinimumSize(400, 400)
         lo = QVBoxLayout(dlg)
         lc = QApplication.palette().color(QPalette.Link).name()
-        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.17</p>'
+        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.18</p>'
               f'<p>이 프로그램은 Python + PySide6로 작성하고,<br>'
               f'공공누리 제1유형으로 개방한 공공데이터 API 서비스를 이용하였으며,<br>'
               f'API 서비스는 아래의 페이지에서 무료로 이용할 수 있습니다.</p>'
@@ -2810,24 +2934,57 @@ class SeoulBusRecorder(QMainWindow):
 # 【6-25】 _on_toggle()
 #   [기록 시작]/[기록 중지] 메뉴 클릭 시 호출. 현재 상태에 따라 분기.
 #
-# 【6-26】 _start_monitoring()
-#   모니터링 시작:
-#   ① 노선 등록 확인 → 자동 저장 파일 생성 (운행기록_YYYYMMDD_HHMMSS.xlsx)
-#   ② is_monitoring=True, 메뉴 "기록 중지"로 변경, [노선 검색] 비활성화
-#   ③ resume_tick() 호출, _main_loop 데몬 스레드 시작
+#   기록 중지 상태에서 클릭 시:
+#   ① 예약 대기 중이면 팝업 →
+#      [바로 시작]: 예약 취소 + 이전 기록 확인 후 시작
+#      [취소]: 아무것도 안 함
+#   ② 이전 기록이 있으면 팝업 →
+#      [새로 시작]: 기록창 초기화 후 시작
+#      [취소]: 아무것도 안 함
+#   ③ 이전 기록 없으면 바로 시작
 #
-# 【6-27】 _stop_monitoring()
-#   모니터링 중지:
-#   ① 확인 메시지 → is_monitoring=False, 메뉴 원복
-#   ② pause_tick() 호출, 미저장 기록 있으면 즉시 저장
+#   기록 중 상태에서 클릭 시:
+#   → _stop_monitoring() 호출
 # ──────────────────────────────────────────────────────────
     def _on_toggle(self):
         if self.is_monitoring:
             self._stop_monitoring()
         else:
+            # ① 예약 대기 중이면 예약 취소 팝업
+            if self._schedule_timer is not None:
+                ret = QMessageBox.question(
+                    self, "예약 확인",
+                    "예약이 설정되어 있습니다.\n지금 바로 기록을 시작하면 예약이 취소됩니다.\n바로 시작하시겠습니까?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if ret != QMessageBox.Yes:
+                    return
+                self._schedule_timer.stop()
+                self._schedule_timer = None
+                self._scheduled_dt = None
+                self.act_schedule.setText("예약 기록 시작")
+                self.log("⏰ 예약이 취소되고 기록을 시작합니다.")
+            # ② 이전 기록 있으면 초기화 팝업
+            if self.recorded_data:
+                ret = QMessageBox.question(
+                    self, "이전 기록 있음",
+                    "이전 기록이 있습니다.\n기록을 새로 시작하면 화면의 이전 기록이 지워지고,\n새로운 파일에 기록됩니다.\n(저장된 엑셀 파일은 유지됩니다)",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if ret != QMessageBox.Yes:
+                    return
+                self._clear_recorded_data()
             self._start_monitoring()
 
+# ──────────────────────────────────────────────────────────
+# 【6-26】 _start_monitoring()
+#   모니터링 시작:
+#   ① 이미 기록 중이면 중복 실행 방지 가드
+#   ② 노선 등록 확인 → 자동 저장 파일 생성 (운행기록_YYYYMMDD_HHMMSS.xlsx)
+#   ③ is_monitoring=True, 메뉴 "기록 중지"로 변경, [노선 검색] 비활성화
+#   ④ resume_tick() 호출, _main_loop 데몬 스레드 시작
+# ──────────────────────────────────────────────────────────
     def _start_monitoring(self):
+        if self.is_monitoring:      # 중복 실행 방지 가드
+            return
         if not self.routes:
             QMessageBox.warning(self, "알림", "불러온 노선이 없습니다. 먼저 노선을 검색하세요.")
             return
@@ -2836,7 +2993,12 @@ class SeoulBusRecorder(QMainWindow):
         try:
             pd.DataFrame(columns=["데이터시각", "운행시작/종료", "정류소이름(번호)", "노선", "차량번호"]).to_excel(self.auto_save_path, index=False)
             self.can_auto_save = True
-            self.log(f"자동 저장 파일: {fn}")
+            self.log(f"자동 저장 파일: {self.auto_save_path}")
+            self._log_file_label.set_full_text(self.auto_save_path)
+            self._log_file_prefix.setVisible(True)
+            self._log_file_label.setVisible(True)
+            self._btn_open_file.setVisible(True)
+            self._btn_open_folder.setVisible(True)
         except Exception as e:
             QMessageBox.warning(self, "오류", f"엑셀 파일 생성 실패: {e}")
             return
@@ -2849,23 +3011,56 @@ class SeoulBusRecorder(QMainWindow):
         threading.Thread(target=self._main_loop, daemon=True).start()
         self.log(f"▶ 자동 기록을 시작합니다. (주기: {self.refresh_interval}초)")
 
+# ──────────────────────────────────────────────────────────
+# 【6-26-A】 _clear_recorded_data()
+#   기록창(table_depart, table_arrive)과 recorded_data, _saved_record_count를 초기화.
+#   기록 시작 전 이전 기록을 지울 때 호출.
+# ──────────────────────────────────────────────────────────
+    def _clear_recorded_data(self):
+        self.recorded_data = []
+        self._saved_record_count = 0
+        self.table_depart.table.setRowCount(0)
+        self.table_arrive.table.setRowCount(0)
+
+# ──────────────────────────────────────────────────────────
+# 【6-27】 _stop_monitoring()
+#   모니터링 중지:
+#   ① 중지 예약 중이면 별도 팝업 →
+#      [바로 중지]: 중지 예약 취소 + 즉시 중지
+#      [취소]: 아무것도 안 함
+#   ② 중지 예약 없으면 일반 확인 팝업
+#   ③ is_monitoring=False, 메뉴 원복, 파일 경로 라벨 숨김
+#   ④ pause_tick() 호출, 미저장 기록 있으면 즉시 저장
+# ──────────────────────────────────────────────────────────
     def _stop_monitoring(self):
-        if QMessageBox.question(self, "중지 확인", "정말 기록을 중지하시겠습니까?") != QMessageBox.Yes:
-            return
-        # 중지 예약이 걸려 있으면 함께 해제
         if self._stop_schedule_timer is not None:
+            ret = QMessageBox.question(
+                self, "중지 확인",
+                "중지 예약이 설정되어 있습니다.\n지금 바로 중지하면 예약이 취소됩니다.\n바로 중지하시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ret != QMessageBox.Yes:
+                return
             self._stop_schedule_timer.stop()
             self._stop_schedule_timer = None
             self._stop_scheduled_dt = None
+            self.log("⏰ 중지 예약이 취소되고 기록을 중지합니다.")
+        else:
+            if QMessageBox.question(self, "중지 확인", "정말 기록을 중지하시겠습니까?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            self.log("■ 기록을 중지합니다.")
         self.is_monitoring = False
         self.act_toggle.setText("기록 시작")
         self.act_schedule.setText("예약 기록 시작")
         self.act_search.setEnabled(True)
+        self._log_file_prefix.setVisible(False)
+        self._log_file_label.setVisible(False)
+        self._btn_open_file.setVisible(False)
+        self._btn_open_folder.setVisible(False)
         for p in self.route_map_panels.values():
             p.pause_tick()
         if self.recorded_data and self.auto_save_path and self.can_auto_save and len(self.recorded_data) > self._saved_record_count:
             self._perform_auto_save()
-        self.log("■ 자동 기록을 중지합니다.")
 
 # ──────────────────────────────────────────────────────────
 # 【6-28】 _main_loop()
@@ -3279,7 +3474,7 @@ class SeoulBusRecorder(QMainWindow):
         dlg.setMinimumSize(400, 400)
         lo = QVBoxLayout(dlg)
         lc = QApplication.palette().color(QPalette.Link).name()
-        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.17</p>'
+        ih = (f'<p style="font-size:10pt; font-weight:bold;">서울시내버스 노선 운행기록 수집 프로그램 v1.18</p>'
               f'<p>이 프로그램은 Python + PySide6로 작성하고,<br>'
               f'공공누리 제1유형으로 개방한 공공데이터 API 서비스를 이용하였으며,<br>'
               f'API 서비스는 아래의 페이지에서 무료로 이용할 수 있습니다.</p>'
